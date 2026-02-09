@@ -1,0 +1,117 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter, useParams } from "next/navigation";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+import YoutubePlayer from "@/components/YoutubePlayer";
+
+interface Video {
+  id: string;
+  title: string;
+  video_id: string;
+}
+
+interface AssignmentRow {
+  id: string;
+  is_completed: boolean;
+  videos: Video | null;
+}
+
+export default function WatchPage() {
+  const params = useParams();
+  const router = useRouter();
+  const assignmentId = params?.assignmentId as string | undefined;
+
+  const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!assignmentId) {
+      setLoading(false);
+      setError("잘못된 경로입니다.");
+      return;
+    }
+    if (!supabase) {
+      setError("Supabase가 설정되지 않았습니다.");
+      setLoading(false);
+      return;
+    }
+
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+
+      const { data, error: fetchError } = await supabase
+        .from("assignments")
+        .select("id, is_completed, progress_percent, videos(id, title, video_id)")
+        .eq("id", assignmentId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (fetchError || !data) {
+        setError(fetchError?.message ?? "과제를 찾을 수 없습니다.");
+        setLoading(false);
+        return;
+      }
+
+      setAssignment(data as AssignmentRow);
+      setLoading(false);
+    }
+
+    load();
+  }, [assignmentId, router]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-zinc-950">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+        <p className="mt-4 text-sm text-zinc-500">불러오는 중...</p>
+      </div>
+    );
+  }
+
+  if (error || !assignment?.videos) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 dark:bg-zinc-950">
+        <p className="text-red-600 dark:text-red-400">{error ?? "영상 정보가 없습니다."}</p>
+        <Link href="/student" className="mt-4 text-blue-600 hover:underline dark:text-blue-400">
+          목록으로 돌아가기
+        </Link>
+      </div>
+    );
+  }
+
+  const video = assignment.videos;
+
+  return (
+    <div className="flex min-h-screen flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
+      <header className="mb-6 w-full max-w-4xl mx-auto">
+        <Link
+          href="/student"
+          className="inline-block text-sm font-medium text-blue-600 hover:underline dark:text-blue-400 mb-4"
+        >
+          ← 목록으로
+        </Link>
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
+          {video.title}
+        </h1>
+      </header>
+
+      <main className="w-full max-w-4xl mx-auto overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="p-4 sm:p-6">
+          <YoutubePlayer videoId={video.video_id} assignmentId={assignment.id} />
+        </div>
+        <div className="border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            영상을 끝까지 시청하면 완료 처리됩니다.
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
