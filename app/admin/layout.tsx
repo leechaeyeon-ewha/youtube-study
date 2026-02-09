@@ -22,12 +22,17 @@ export default function AdminLayout({
       return;
     }
     async function check() {
-      const { data: { user } } = await supabase.auth.getUser();
+      const client = supabase;
+      if (!client) {
+        setLoading(false);
+        return;
+      }
+      const { data: { user } } = await client.auth.getUser();
       if (!user) {
         router.replace("/login");
         return;
       }
-      const { data: profileData, error } = await supabase
+      const { data: profileData, error } = await client
         .from("profiles")
         .select("id, role, full_name, email")
         .eq("id", user.id)
@@ -108,7 +113,8 @@ export default function AdminLayout({
             <button
               type="button"
               onClick={async () => {
-                await supabase?.auth.signOut();
+                if (!supabase) return;
+                await supabase.auth.signOut();
                 router.replace("/login");
                 router.refresh();
               }}
