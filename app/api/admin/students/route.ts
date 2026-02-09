@@ -79,3 +79,52 @@ export async function POST(req: Request) {
     email,
   });
 }
+
+export async function DELETE(req: Request) {
+  const admin = await requireAdmin(req);
+  if (!admin) {
+    return NextResponse.json({ error: "관리자만 접근할 수 있습니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "서버 설정이 없습니다. SUPABASE_SERVICE_ROLE_KEY를 설정해 주세요." },
+      { status: 500 }
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
+
+  if (!userId) {
+    return NextResponse.json({ error: "삭제할 학생을 지정해 주세요." }, { status: 400 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, role")
+    .eq("id", userId)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "해당 사용자를 찾을 수 없습니다." }, { status: 404 });
+  }
+  if (profile.role === "admin") {
+    return NextResponse.json({ error: "관리자 계정은 삭제할 수 없습니다." }, { status: 400 });
+  }
+
+  await supabase.from("assignments").delete().eq("user_id", userId);
+  await supabase.from("profiles").delete().eq("id", userId);
+
+  const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
+
+  if (deleteAuthError) {
+    return NextResponse.json(
+      { error: "계정 삭제 중 오류가 발생했습니다. " + deleteAuthError.message },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ success: true });
+}

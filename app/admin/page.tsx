@@ -36,6 +36,8 @@ export default function AdminDashboardPage() {
   const [assignUrl, setAssignUrl] = useState("");
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   async function load() {
     if (!supabase) return;
@@ -167,6 +169,31 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function handleDeleteStudent(userId: string, fullName: string) {
+    if (!confirm(`"${fullName}" 학생을 삭제(퇴원 처리)하시겠습니까?\n삭제 시 해당 학생의 진도 기록도 함께 삭제되며, 복구할 수 없습니다.`)) return;
+    setDeleteUserId(userId);
+    setDeleteLoading(true);
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const res = await fetch("/api/admin/students", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "삭제 실패");
+      load();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "삭제에 실패했습니다.");
+    } finally {
+      setDeleteUserId(null);
+      setDeleteLoading(false);
+    }
+  }
+
   function formatLastWatched(at: string | null) {
     if (!at) return "-";
     const d = new Date(at);
@@ -247,7 +274,7 @@ export default function AdminDashboardPage() {
             students.map((s) => (
               <div key={s.id} className="px-6 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-900 dark:text-white">
                       {s.full_name || s.email || s.id.slice(0, 8)}
                     </span>
@@ -258,9 +285,17 @@ export default function AdminDashboardPage() {
                         setAssignUrl("");
                         setAssignMessage(null);
                       }}
-                      className="ml-3 rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                      className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
                     >
                       {assignUserId === s.id ? "취소" : "영상 할당"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
+                      disabled={deleteLoading}
+                      className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                    >
+                      {deleteUserId === s.id ? "삭제 중..." : "삭제(퇴원)"}
                     </button>
                   </div>
                 </div>
