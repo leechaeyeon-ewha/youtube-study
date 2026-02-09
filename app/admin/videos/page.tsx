@@ -35,7 +35,24 @@ export default function AdminVideosPage() {
       setMessage({ type: "error", text: "유효한 YouTube URL을 입력해 주세요. (watch?v=, youtu.be/, embed/ 지원)" });
       return;
     }
-    const title = titleInput.trim() || `영상 ${videoId}`;
+    let title = titleInput.trim();
+    if (!title) {
+      try {
+        const res = await fetch("/api/youtube-title", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: urlInput }),
+        });
+        const data = await res.json();
+        if (res.ok && data.title) {
+          title = data.title as string;
+        } else {
+          title = `영상 ${videoId}`;
+        }
+      } catch {
+        title = `영상 ${videoId}`;
+      }
+    }
     if (!supabase) return;
     setSubmitLoading(true);
     const { error } = await supabase.from("videos").insert({ title, video_id: videoId });

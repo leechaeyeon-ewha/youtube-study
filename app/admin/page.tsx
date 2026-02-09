@@ -118,9 +118,25 @@ export default function AdminDashboardPage() {
       if (existing?.id) {
         videoDbId = existing.id;
       } else {
+        // 새 영상인 경우 YouTube에서 제목을 가져와 저장 시 사용
+        let title = `영상 ${videoId}`;
+        try {
+          const res = await fetch("/api/youtube-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: assignUrl }),
+          });
+          const data = await res.json();
+          if (res.ok && data.title) {
+            title = data.title as string;
+          }
+        } catch {
+          // 실패 시 기본 제목 유지
+        }
+
         const { data: inserted, error: insertErr } = await supabase
           .from("videos")
-          .insert({ title: `영상 ${videoId}`, video_id: videoId })
+          .insert({ title, video_id: videoId })
           .select("id")
           .single();
         if (insertErr || !inserted?.id) throw new Error(insertErr?.message ?? "영상 등록 실패");
