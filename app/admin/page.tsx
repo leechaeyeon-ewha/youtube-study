@@ -10,6 +10,7 @@ interface Profile {
   email: string | null;
 }
 
+// Supabase 조인 결과가 videos를 배열로 반환할 수 있어 단일·배열 모두 허용
 interface AssignmentWithVideo {
   id: string;
   user_id: string;
@@ -17,7 +18,10 @@ interface AssignmentWithVideo {
   progress_percent: number;
   last_position: number;
   last_watched_at: string | null;
-  videos: { id: string; title: string; video_id: string } | null;
+  videos:
+    | { id: string; title: string; video_id: string }
+    | { id: string; title: string; video_id: string }[]
+    | null;
 }
 
 export default function AdminDashboardPage() {
@@ -45,7 +49,7 @@ export default function AdminDashboardPage() {
 
     if (!profilesRes.error) setStudents((profilesRes.data as Profile[]) ?? []);
     if (!assignmentsRes.error) {
-      const list = (assignmentsRes.data as AssignmentWithVideo[]) ?? [];
+      const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
       const byUser: Record<string, AssignmentWithVideo[]> = {};
       list.forEach((a) => {
         if (!byUser[a.user_id]) byUser[a.user_id] = [];
@@ -291,10 +295,12 @@ export default function AdminDashboardPage() {
                           </td>
                         </tr>
                       ) : (
-                        (assignmentsByUser[s.id] ?? []).map((a) => (
+                        (assignmentsByUser[s.id] ?? []).map((a) => {
+                          const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                          return (
                           <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
                             <td className="py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
-                              {a.videos?.title ?? "-"}
+                              {video?.title ?? "-"}
                             </td>
                             <td className="py-2 pr-4">
                               <span className={a.is_completed ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
@@ -305,7 +311,8 @@ export default function AdminDashboardPage() {
                               {formatLastWatched(a.last_watched_at)}
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
