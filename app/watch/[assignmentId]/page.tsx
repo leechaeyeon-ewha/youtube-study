@@ -15,6 +15,8 @@ interface Video {
 interface AssignmentRow {
   id: string;
   is_completed: boolean;
+  progress_percent?: number;
+  last_position?: number;
   videos: Video | null;
 }
 
@@ -48,7 +50,7 @@ export default function WatchPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, videos(id, title, video_id)")
+        .select("id, is_completed, progress_percent, last_position, videos(id, title, video_id)")
         .eq("id", assignmentId)
         .eq("user_id", user.id)
         .single();
@@ -104,7 +106,11 @@ export default function WatchPage() {
 
       <main className="w-full max-w-4xl mx-auto overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
         <div className="p-4 sm:p-6">
-          <YoutubePlayer videoId={video.video_id} assignmentId={assignment.id} />
+          <YoutubePlayer
+            videoId={video.video_id}
+            assignmentId={assignment.id}
+            initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
+          />
         </div>
         <div className="border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
