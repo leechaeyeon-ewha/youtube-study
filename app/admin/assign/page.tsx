@@ -12,8 +12,12 @@ interface AssignmentRow {
   progress_percent: number;
   last_position: number;
   last_watched_at: string | null;
-  videos: { id: string; title: string; video_id: string } | null;
-  profiles: { full_name: string | null; email: string | null } | null;
+  // Supabase 타입 상 videos/profiles가 배열로 잡힐 수 있어서 단일·배열 모두 허용
+  videos: { id: string; title: string; video_id: string } | { id: string; title: string; video_id: string }[] | null;
+  profiles:
+    | { full_name: string | null; email: string | null }
+    | { full_name: string | null; email: string | null }[]
+    | null;
 }
 
 export default function AdminAssignPage() {
@@ -38,7 +42,8 @@ export default function AdminAssignPage() {
     ]);
     if (!profilesRes.error) setStudents((profilesRes.data as Profile[]) ?? []);
     if (!videosRes.error) setVideos((videosRes.data as Video[]) ?? []);
-    if (!assignmentsRes.error) setAssignments((assignmentsRes.data as AssignmentRow[]) ?? []);
+    if (!assignmentsRes.error)
+      setAssignments(((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
     setLoading(false);
   }
 
@@ -178,59 +183,66 @@ export default function AdminAssignPage() {
                     </td>
                   </tr>
                 ) : (
-                  assignments.map((a) => (
-                    <tr
-                      key={a.id}
-                      className="border-b border-slate-100 dark:border-zinc-700/50 hover:bg-slate-50 dark:hover:bg-zinc-800/30"
-                    >
-                      <td className="px-4 py-3">
-                        <span className="font-medium text-slate-900 dark:text-white">
-                          {a.profiles?.full_name || a.profiles?.email || a.user_id.slice(0, 8)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-slate-700 dark:text-slate-300">
-                          {a.videos?.title ?? "-"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={
-                            a.is_completed
-                              ? "font-medium text-green-600 dark:text-green-400"
-                              : "text-slate-600 dark:text-slate-400"
-                          }
-                        >
-                          {a.progress_percent.toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                        {a.last_watched_at
-                          ? new Date(a.last_watched_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })
-                          : "-"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {a.is_completed ? (
-                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                            완료
+                  assignments.map((a) => {
+                    const profile = Array.isArray(a.profiles) ? a.profiles[0] : a.profiles;
+                    const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                    return (
+                      <tr
+                        key={a.id}
+                        className="border-b border-slate-100 dark:border-zinc-700/50 hover:bg-slate-50 dark:hover:bg-zinc-800/30"
+                      >
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-slate-900 dark:text-white">
+                            {profile?.full_name || profile?.email || a.user_id.slice(0, 8)}
                           </span>
-                        ) : (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                            미완료
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-slate-700 dark:text-slate-300">
+                            {video?.title ?? "-"}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => handleUnassign(a.id)}
-                          className="text-red-600 hover:underline dark:text-red-400"
-                        >
-                          배정 해제
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={
+                              a.is_completed
+                                ? "font-medium text-green-600 dark:text-green-400"
+                                : "text-slate-600 dark:text-slate-400"
+                            }
+                          >
+                            {a.progress_percent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                          {a.last_watched_at
+                            ? new Date(a.last_watched_at).toLocaleString("ko-KR", {
+                                dateStyle: "short",
+                                timeStyle: "short",
+                              })
+                            : "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {a.is_completed ? (
+                            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                              완료
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                              미완료
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleUnassign(a.id)}
+                            className="text-red-600 hover:underline dark:text-red-400"
+                          >
+                            배정 해제
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
