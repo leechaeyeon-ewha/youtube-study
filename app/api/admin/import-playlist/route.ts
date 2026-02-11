@@ -78,6 +78,12 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+  if (!youtubeApiKey) {
+    return NextResponse.json(
+      { error: "YOUTUBE_API_KEY가 설정되지 않았습니다. 배포 환경(Vercel 등)의 환경 변수에 추가한 뒤 재배포해 주세요." },
+      { status: 500 }
+    );
+  }
 
   const body = await req.json().catch(() => ({}));
   const playlistUrl = typeof body.playlist_url === "string" ? body.playlist_url.trim() : "";
@@ -103,9 +109,10 @@ export async function POST(req: Request) {
     playlistTitle = result.title;
     items = result.items;
   } catch (err) {
+    const message = err instanceof Error ? err.message : "재생목록을 가져오지 못했습니다.";
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "재생목록을 가져오지 못했습니다." },
-      { status: 400 }
+      { error: message },
+      { status: message.includes("YOUTUBE_API_KEY") ? 500 : 400 }
     );
   }
 
@@ -126,8 +133,9 @@ export async function POST(req: Request) {
     .single();
 
   if (courseError || !course?.id) {
+    const msg = courseError?.message ?? "강좌 생성에 실패했습니다.";
     return NextResponse.json(
-      { error: courseError?.message ?? "강좌 생성에 실패했습니다." },
+      { error: msg.includes("relation") || msg.includes("does not exist") ? "courses 테이블이 없습니다. Supabase SQL Editor에서 schema_full_final.sql 또는 migration_courses.sql을 실행해 주세요." : msg },
       { status: 500 }
     );
   }

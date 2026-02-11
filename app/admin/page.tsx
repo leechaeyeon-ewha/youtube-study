@@ -62,8 +62,10 @@ export default function AdminDashboardPage() {
 
   async function load() {
     if (!supabase) return;
-    const [profilesRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
-      supabase.from("profiles").select("id, full_name, email, report_token, is_report_enabled, parent_phone, class_id").eq("role", "student").order("full_name"),
+    const { data: { session } } = await supabase.auth.getSession();
+    const authHeader = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const [studentsRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
+      fetch("/api/admin/students", { headers: authHeader }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
@@ -72,7 +74,7 @@ export default function AdminDashboardPage() {
       supabase.from("videos").select("id, title").order("title"),
     ]);
 
-    if (!profilesRes.error) setStudents((profilesRes.data as Profile[]) ?? []);
+    setStudents(Array.isArray(studentsRes) ? (studentsRes as Profile[]) : []);
     if (!assignmentsRes.error) {
       const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
       const byUser: Record<string, AssignmentWithVideo[]> = {};
@@ -85,8 +87,8 @@ export default function AdminDashboardPage() {
     if (!classesRes.error) setClasses((classesRes.data as ClassRow[]) ?? []);
     if (!videosRes.error) setVideosForBulk((videosRes.data as { id: string; title: string }[]) ?? []);
 
-    if (!profilesRes.error && !assignmentsRes.error && !classesRes.error) {
-      const studentsList = (profilesRes.data as Profile[]) ?? [];
+    const studentsList = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
+    if (studentsList.length > 0 && !assignmentsRes.error && !classesRes.error) {
       const byUser = assignmentsRes.error ? {} : (() => {
         const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
         const r: Record<string, AssignmentWithVideo[]> = {};
