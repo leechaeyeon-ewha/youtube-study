@@ -169,8 +169,8 @@ export default function AdminVideosPage() {
         headers: { "Content-Type": "application/json", Authorization: session?.access_token ? `Bearer ${session.access_token}` : "" },
         body: JSON.stringify({ playlist_url: playlistUrl.trim(), course_title: playlistCourseTitle.trim() || undefined }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "재생목록 등록 실패");
+      const data = (await res.json().catch(() => ({}))) as { error?: string; courseTitle?: string; added?: number; skipped?: number; total?: number };
+      if (!res.ok) throw new Error(data?.error || `서버 오류 (${res.status}). Vercel 환경 변수 YOUTUBE_API_KEY, SUPABASE_SERVICE_ROLE_KEY 확인 후 재배포해 주세요.`);
       setPlaylistMessage({ type: "success", text: `강좌 "${data.courseTitle}" 생성 완료. 새로 등록 ${data.added}개, 기존 영상 연결 ${data.skipped}개 (총 ${data.total}개)` });
       setPlaylistUrl("");
       setPlaylistCourseTitle("");
