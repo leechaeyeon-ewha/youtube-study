@@ -151,7 +151,18 @@ export default function AdminDashboardPage() {
       setAddMessage({ type: "success", text: `${addFullName.trim()} 학생이 등록되었습니다.` });
       setAddFullName("");
       setAddPassword("");
-      load();
+      // 등록된 학생을 즉시 목록에 반영 (서버 재조회 전에도 보이도록)
+      const newProfile: Profile = {
+        id: data.id,
+        full_name: data.full_name ?? null,
+        email: data.email ?? null,
+        report_token: null,
+        is_report_enabled: false,
+        parent_phone: null,
+        class_id: null,
+      };
+      setStudents((prev) => [...prev, newProfile].sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? "")));
+      await load();
     } catch (err: unknown) {
       setAddMessage({
         type: "error",
