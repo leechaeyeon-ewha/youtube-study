@@ -61,12 +61,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "사용자 생성에 실패했습니다." }, { status: 500 });
   }
 
-  const { error: updateError } = await supabase
+  // 트리거가 없거나 실패해도 목록에 나오도록 upsert (role 반드시 'student')
+  const { error: upsertError } = await supabase
     .from("profiles")
-    .update({ full_name: fullName })
-    .eq("id", userData.user.id);
+    .upsert(
+      {
+        id: userData.user.id,
+        role: "student",
+        full_name: fullName,
+        email,
+      },
+      { onConflict: "id" }
+    );
 
-  if (updateError) {
+  if (upsertError) {
     return NextResponse.json(
       { error: "프로필 저장에 실패했습니다." },
       { status: 500 }
