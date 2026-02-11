@@ -42,7 +42,7 @@ export async function GET(
     is_completed: boolean;
     progress_percent: number;
     last_watched_at: string | null;
-    videos: { id: string; title: string } | null;
+    videos: { id: string; title: string }[] | null;
   }[];
 
   const inWeek = list.filter((a) => a.last_watched_at && a.last_watched_at >= weekIso);
