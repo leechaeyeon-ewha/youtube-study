@@ -29,6 +29,7 @@ export default function AdminAssignPage() {
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) return;
@@ -65,6 +66,8 @@ export default function AdminAssignPage() {
       is_completed: false,
       progress_percent: 0,
       last_position: 0,
+      is_visible: true,
+      is_weekly_assignment: false,
     });
     if (error) {
       if (error.code === "23505") {
@@ -162,91 +165,106 @@ export default function AdminAssignPage() {
         <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
           배정 목록 · 진도 현황
         </h2>
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+          학생별로 배정된 영상을 확인하고, 배정 해제할 수 있습니다.
+        </p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[600px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 dark:border-zinc-700 dark:bg-zinc-800/50">
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">학생</th>
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">영상</th>
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">진도율</th>
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">마지막 시청</th>
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">완료</th>
-                  <th className="px-4 py-3 font-medium text-slate-700 dark:text-slate-300">관리</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignments.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                      배정된 학습이 없습니다.
-                    </td>
-                  </tr>
-                ) : (
-                  assignments.map((a) => {
-                    const profile = Array.isArray(a.profiles) ? a.profiles[0] : a.profiles;
-                    const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                    return (
-                      <tr
-                        key={a.id}
-                        className="border-b border-slate-100 dark:border-zinc-700/50 hover:bg-slate-50 dark:hover:bg-zinc-800/30"
-                      >
-                        <td className="px-4 py-3">
-                          <span className="font-medium text-slate-900 dark:text-white">
-                            {profile?.full_name || profile?.email || a.user_id.slice(0, 8)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-slate-700 dark:text-slate-300">
-                            {video?.title ?? "-"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={
-                              a.is_completed
-                                ? "font-medium text-green-600 dark:text-green-400"
-                                : "text-slate-600 dark:text-slate-400"
-                            }
-                          >
-                            {a.progress_percent.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                          {a.last_watched_at
-                            ? new Date(a.last_watched_at).toLocaleString("ko-KR", {
-                                dateStyle: "short",
-                                timeStyle: "short",
-                              })
-                            : "-"}
-                        </td>
-                        <td className="px-4 py-3">
-                          {a.is_completed ? (
-                            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                              완료
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                              미완료
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => handleUnassign(a.id)}
-                            className="text-red-600 hover:underline dark:text-red-400"
-                          >
-                            배정 해제
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          {assignments.length === 0 ? (
+            <div className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
+              배정된 학습이 없습니다.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+              {(() => {
+                const byStudent = new Map<string, AssignmentRow[]>();
+                for (const a of assignments) {
+                  const list = byStudent.get(a.user_id) ?? [];
+                  list.push(a);
+                  byStudent.set(a.user_id, list);
+                }
+                return Array.from(byStudent.entries()).map(([userId, list]) => {
+                  const first = list[0];
+                  const profile = Array.isArray(first.profiles) ? first.profiles[0] : first.profiles;
+                  const studentName = profile?.full_name || profile?.email || userId.slice(0, 8);
+                  const isExpanded = expandedStudentId === userId;
+                  return (
+                    <li key={userId} className="bg-white dark:bg-zinc-900">
+                      <div className="flex items-center justify-between gap-4 px-4 py-3">
+                        <span className="font-medium text-slate-900 dark:text-white">
+                          {studentName}
+                        </span>
+                        <span className="text-sm text-slate-500 dark:text-slate-400">
+                          배정 영상 {list.length}개
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedStudentId(isExpanded ? null : userId)}
+                          className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                        >
+                          {isExpanded ? "접기" : "배정된 영상 보기"}
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                              <thead>
+                                <tr className="border-b border-slate-200 dark:border-zinc-700">
+                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
+                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
+                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">마지막 시청</th>
+                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">완료</th>
+                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">관리</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {list.map((a) => {
+                                  const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                                  return (
+                                    <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
+                                      <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
+                                        {video?.title ?? "-"}
+                                      </td>
+                                      <td className="px-4 py-2.5">
+                                        <span className={a.is_completed ? "font-medium text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
+                                          {a.progress_percent.toFixed(1)}%
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">
+                                        {a.last_watched_at
+                                          ? new Date(a.last_watched_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })
+                                          : "-"}
+                                      </td>
+                                      <td className="px-4 py-2.5">
+                                        {a.is_completed ? (
+                                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">완료</span>
+                                        ) : (
+                                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">미완료</span>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-2.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUnassign(a.id)}
+                                          className="text-red-600 hover:underline dark:text-red-400"
+                                        >
+                                          배정 해제
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                });
+              })()}
+            </ul>
+          )}
         </div>
       </section>
     </div>

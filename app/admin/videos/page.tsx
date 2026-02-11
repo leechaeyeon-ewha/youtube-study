@@ -62,6 +62,7 @@ export default function AdminVideosPage() {
   const [settingsMessage, setSettingsMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   const [bulkMessage, setBulkMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   async function loadVideos() {
     if (!supabase) return;
@@ -186,6 +187,24 @@ export default function AdminVideosPage() {
     await supabase.from("videos").delete().eq("id", id);
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
     loadVideos();
+  }
+
+  async function handleBulkDelete() {
+    if (!supabase || selectedVideoIds.length === 0) return;
+    if (!confirm(`선택한 ${selectedVideoIds.length}개 영상을 삭제할까요?\n배정된 학습 기록도 함께 삭제되며, 복구할 수 없습니다.`)) return;
+    setDeleteLoading(true);
+    setBulkMessage(null);
+    try {
+      const { error } = await supabase.from("videos").delete().in("id", selectedVideoIds);
+      if (error) throw error;
+      setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다.` });
+      setSelectedVideoIds([]);
+      loadVideos();
+    } catch (err) {
+      setBulkMessage({ type: "error", text: err instanceof Error ? err.message : "삭제에 실패했습니다." });
+    } finally {
+      setDeleteLoading(false);
+    }
   }
 
   function toggleSelectVideo(id: string) {
@@ -397,6 +416,14 @@ export default function AdminVideosPage() {
                   </button>
                   <button type="button" onClick={() => { setSettingsMessage(null); setSettingsModalOpen(true); }} className="rounded-lg bg-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600">
                     선택 항목 노출/주간과제 설정 (학생·반별)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBulkDelete}
+                    disabled={deleteLoading}
+                    className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                  >
+                    {deleteLoading ? "삭제 중..." : "선택 항목 삭제"}
                   </button>
                 </>
               )}
