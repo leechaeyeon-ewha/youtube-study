@@ -36,7 +36,9 @@ export default function AdminLayout({
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) {
-        router.replace("/");
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.includes("프로필") ? "no_profile" : "";
+        router.replace(msg ? `/login?error=${msg}` : "/");
         setLoading(false);
         return;
       }

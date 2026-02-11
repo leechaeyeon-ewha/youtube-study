@@ -34,7 +34,10 @@ export async function GET(req: Request) {
     .single();
 
   if (error || !profile) {
-    return NextResponse.json({ error: "프로필을 찾을 수 없습니다." }, { status: 404 });
+    return NextResponse.json(
+      { error: "프로필을 찾을 수 없습니다. Supabase 대시보드에서 profiles 테이블에 이 계정(role=admin)을 추가해 주세요." },
+      { status: 401 }
+    );
   }
 
   return NextResponse.json({

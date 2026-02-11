@@ -30,7 +30,9 @@ export default function Home() {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) {
-        router.replace("/login");
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.includes("프로필") ? "no_profile" : "";
+        router.replace(msg ? `/login?error=${msg}` : "/login");
         return;
       }
       const profile = await res.json();

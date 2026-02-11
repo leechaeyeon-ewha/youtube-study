@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Who = "admin" | "student" | null;
@@ -9,12 +9,24 @@ type FormMode = "admin" | "student";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [who, setWho] = useState<Who>(null);
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const err = searchParams.get("error");
+    if (err === "no_profile") {
+      setMessage({
+        type: "error",
+        text: "이 계정에는 프로필이 없습니다. Supabase 대시보드 → profiles 테이블에 이 사용자와 role=admin을 추가해 주세요.",
+      });
+      window.history.replaceState({}, "", "/login");
+    }
+  }, [searchParams]);
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,9 +37,14 @@ export default function LoginPage() {
     setMessage(null);
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      router.push("/admin");
+      // 세션이 저장된 뒤 이동하도록 전체 페이지 이동 사용 (그렇지 않으면 /api/auth/me가 세션 못 읽음)
+      if (data.session) {
+        window.location.href = "/admin";
+        return;
+      }
+      router.replace("/admin");
       router.refresh();
     } catch (err: unknown) {
       setMessage({
@@ -56,12 +73,16 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "학생 정보를 찾을 수 없습니다.");
 
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({
         email: data.email,
         password,
       });
       if (error) throw error;
-      router.push("/student");
+      if (signInData.session) {
+        window.location.href = "/student";
+        return;
+      }
+      router.replace("/student");
       router.refresh();
     } catch (err: unknown) {
       setMessage({
@@ -105,6 +126,11 @@ export default function LoginPage() {
           <p className="mb-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
             관리자입니까? 학생입니까?
           </p>
+          {message && (
+            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+              {message.text}
+            </div>
+          )}
           <div className="flex flex-col gap-3">
             <button
               type="button"
