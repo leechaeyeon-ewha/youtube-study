@@ -59,6 +59,7 @@ export async function GET(
       return {
         title: (v as { title?: string } | null)?.title ?? "영상",
         is_completed: a.is_completed,
+        progress_percent: typeof a.progress_percent === "number" ? a.progress_percent : 0,
         last_watched_at: a.last_watched_at,
       };
     })

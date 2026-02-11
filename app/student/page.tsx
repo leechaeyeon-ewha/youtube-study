@@ -10,6 +10,8 @@ interface AssignmentRow {
   id: string;
   is_completed: boolean;
   progress_percent: number;
+  is_visible?: boolean;
+  is_weekly_assignment?: boolean;
   videos: { id: string; title: string; video_id: string } | null;
 }
 
@@ -49,7 +51,7 @@ export default function StudentPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, videos(id, title, video_id, is_visible)")
+        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id)")
         .eq("user_id", user.id);
 
       if (fetchError) {
@@ -58,9 +60,9 @@ export default function StudentPage() {
         return;
       }
 
-      const list = (data ?? []) as (AssignmentRow & { videos?: { is_visible?: boolean } | null })[];
+      const list = (data ?? []) as AssignmentRow[];
       setAssignments(
-        list.filter((a) => (a.videos as { is_visible?: boolean } | null)?.is_visible !== false)
+        list.filter((a) => a.is_visible !== false)
       );
       setLoading(false);
     }
@@ -142,9 +144,16 @@ export default function StudentPage() {
                       <h2 className="font-semibold text-slate-900 dark:text-white line-clamp-2">
                         {video.title}
                       </h2>
-                      <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                        {a.is_completed ? "시청 완료" : `진도 ${(a.progress_percent ?? 0).toFixed(0)}%`}
-                      </p>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                        {a.is_weekly_assignment && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                            주간 과제
+                          </span>
+                        )}
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          {a.is_completed ? "시청 완료" : `진도 ${(a.progress_percent ?? 0).toFixed(0)}%`}
+                        </p>
+                      </div>
                     </div>
                     <span
                       className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${

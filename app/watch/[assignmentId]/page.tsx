@@ -114,7 +114,9 @@ export default function WatchPage() {
         </div>
         <div className="border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            영상을 끝까지 시청하면 완료 처리됩니다.
+            {assignment.is_completed
+              ? "완료된 영상입니다."
+              : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 영상을 끝까지 시청하면 완료 처리됩니다.`}
           </p>
         </div>
       </main>

@@ -8,7 +8,7 @@ interface ReportData {
   studentName?: string;
   weeklyCompletion?: number;
   monthlyCompletion?: number;
-  recentVideos?: { title: string; is_completed: boolean; last_watched_at: string | null }[];
+  recentVideos?: { title: string; is_completed: boolean; progress_percent: number; last_watched_at: string | null }[];
   comment?: string;
 }
 
@@ -106,9 +106,12 @@ export default function ReportPage() {
         </header>
 
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="mb-6 text-center text-sm font-medium text-slate-500 dark:text-slate-400">
+          <h2 className="mb-2 text-center text-sm font-medium text-slate-500 dark:text-slate-400">
             과제 이수율
           </h2>
+          <p className="mb-6 text-center text-xs text-slate-400 dark:text-slate-500">
+            최근 7일/30일 내 시청한 영상 중 완료(100%)한 비율입니다.
+          </p>
           <div className="flex justify-center gap-12 sm:gap-16">
             <CircularProgress percent={week} label="이번 주 (최근 7일)" />
             <CircularProgress percent={month} label="이번 달 (최근 30일)" />
@@ -116,9 +119,12 @@ export default function ReportPage() {
         </section>
 
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="mb-4 text-base font-semibold text-slate-800 dark:text-white">
+          <h2 className="mb-1 text-base font-semibold text-slate-800 dark:text-white">
             학습 이력 (최근 7일)
           </h2>
+          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
+            학원 학습관에서 시청한 영상만 진도가 기록됩니다. 각 영상의 저장된 진도 %를 표시합니다.
+          </p>
           {recentVideos.length === 0 ? (
             <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
               최근 시청한 영상이 없습니다.
@@ -128,10 +134,13 @@ export default function ReportPage() {
               {recentVideos.map((v, i) => (
                 <li
                   key={i}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/50 py-3 px-4 dark:border-zinc-700 dark:bg-zinc-800/50"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/50 py-3 px-4 dark:border-zinc-700 dark:bg-zinc-800/50"
                 >
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-white">
                     {v.title}
+                  </span>
+                  <span className="shrink-0 text-sm font-medium text-slate-700 dark:text-slate-300">
+                    진도 {typeof v.progress_percent === "number" ? v.progress_percent.toFixed(1) : "0"}%
                   </span>
                   <span
                     className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${

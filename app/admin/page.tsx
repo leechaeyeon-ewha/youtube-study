@@ -223,6 +223,8 @@ export default function AdminDashboardPage() {
         is_completed: false,
         progress_percent: 0,
         last_position: 0,
+        is_visible: true,
+        is_weekly_assignment: false,
       });
       if (error) {
         if (error.code === "23505") throw new Error("이미 해당 학생에게 배정된 영상입니다.");
@@ -343,6 +345,8 @@ export default function AdminDashboardPage() {
             is_completed: false,
             progress_percent: 0,
             last_position: 0,
+            is_visible: true,
+            is_weekly_assignment: false,
           });
           if (!error) inserted += 1;
         }
