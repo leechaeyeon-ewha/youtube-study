@@ -15,12 +15,59 @@ interface AssignmentRow {
   videos: { id: string; title: string; video_id: string } | null;
 }
 
+/** PWA 설치 가능 여부 및 홈 화면 추가 안내 */
+function usePwaInstall() {
+  const [showBanner, setShowBanner] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<{ prompt: () => Promise<void> } | null>(null);
+  const [platform, setPlatform] = useState<"ios" | "android" | "other">("other");
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const isStandalone =
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true ||
+      window.matchMedia("(display-mode: standalone)").matches;
+    if (isStandalone) {
+      setShowBanner(false);
+      return;
+    }
+    const ua = window.navigator.userAgent;
+    const isIos = /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && "ontouchend" in document);
+    const isAndroid = /Android/.test(ua);
+    if (isIos) setPlatform("ios");
+    else if (isAndroid) setPlatform("android");
+    else setPlatform("other");
+    setShowBanner(isIos || isAndroid);
+
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt({ prompt: () => (e as unknown as { prompt: () => Promise<void> }).prompt() });
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const runInstall = async () => {
+    if (!installPrompt) return;
+    setInstalling(true);
+    try {
+      await installPrompt.prompt();
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  return { showBanner, installPrompt, platform, installing, runInstall };
+}
+
 export default function StudentPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { showBanner, installPrompt, platform, installing, runInstall } = usePwaInstall();
+  const [pwaDismissed, setPwaDismissed] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -108,6 +155,59 @@ export default function StudentPage() {
             관리자가 할당한 영상 목록입니다. 클릭하면 시청 페이지로 이동합니다.
           </p>
         </header>
+
+        {/* PWA: 앱처럼 사용하기 / 홈 화면에 추가 안내 (학생용) */}
+        {showBanner && !pwaDismissed && (
+          <div className="mb-6 rounded-2xl border border-teal-200 bg-teal-50/80 p-4 dark:border-teal-800 dark:bg-teal-900/20">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-teal-900 dark:text-teal-100">
+                  📱 앱처럼 사용하기
+                </p>
+                <p className="mt-1 text-sm text-teal-700 dark:text-teal-300">
+                  홈 화면에 추가하면 앱처럼 쓸 수 있어요. 주소창 없이 편하게 이용할 수 있습니다.
+                </p>
+                {platform === "ios" && (
+                  <p className="mt-2 text-xs text-teal-600 dark:text-teal-400">
+                    Safari에서 <strong>공유(□↑)</strong> → <strong>홈 화면에 추가</strong>
+                  </p>
+                )}
+                {platform === "android" && !installPrompt && (
+                  <p className="mt-2 text-xs text-teal-600 dark:text-teal-400">
+                    Chrome 메뉴(⋮) → <strong>앱 설치</strong> 또는 <strong>홈 화면에 추가</strong>
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {platform === "android" && installPrompt && (
+                    <button
+                      type="button"
+                      onClick={runInstall}
+                      disabled={installing}
+                      className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-600"
+                    >
+                      {installing ? "설치 중…" : "앱 설치"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPwaDismissed(true)}
+                    className="text-sm text-teal-600 underline hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-200"
+                  >
+                    오늘은 안 할게요
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPwaDismissed(true)}
+                className="shrink-0 rounded p-1 text-teal-500 hover:bg-teal-200/50 hover:text-teal-800 dark:hover:bg-teal-700/50 dark:hover:text-teal-200"
+                aria-label="닫기"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
 
         {assignments.length === 0 ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center dark:border-zinc-800 dark:bg-zinc-900">

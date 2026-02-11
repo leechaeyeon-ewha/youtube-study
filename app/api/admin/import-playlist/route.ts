@@ -5,7 +5,6 @@ import { extractYoutubePlaylistId } from "@/lib/youtube";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const youtubeApiKey = process.env.YOUTUBE_API_KEY;
 
 async function requireAdmin(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -23,11 +22,7 @@ interface PlaylistItem {
   title: string;
 }
 
-async function fetchPlaylistItems(playlistId: string): Promise<{ title: string; items: PlaylistItem[] }> {
-  if (!youtubeApiKey) {
-    throw new Error("YOUTUBE_API_KEY가 설정되지 않았습니다. .env.local에 추가해 주세요.");
-  }
-
+async function fetchPlaylistItems(playlistId: string, youtubeApiKey: string): Promise<{ title: string; items: PlaylistItem[] }> {
   const baseUrl = "https://www.googleapis.com/youtube/v3";
 
   const playlistRes = await fetch(
@@ -78,7 +73,8 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-  if (!youtubeApiKey) {
+  const youtubeApiKey = process.env.YOUTUBE_API_KEY;
+  if (!youtubeApiKey?.trim()) {
     return NextResponse.json(
       { error: "YOUTUBE_API_KEY가 설정되지 않았습니다. 배포 환경(Vercel 등)의 환경 변수에 추가한 뒤 재배포해 주세요." },
       { status: 500 }
@@ -105,7 +101,7 @@ export async function POST(req: Request) {
   let items: PlaylistItem[];
 
   try {
-    const result = await fetchPlaylistItems(playlistId);
+    const result = await fetchPlaylistItems(playlistId, youtubeApiKey);
     playlistTitle = result.title;
     items = result.items;
   } catch (err) {
