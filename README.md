@@ -1,5 +1,13 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+**로고:** 상단바·로그인·학생 페이지에 학원 로고가 표시됩니다. 로고가 안 보이면 학원 로고 이미지 파일을 `public/logo.png` 로 저장해 주세요.
+
+**강좌(courses) 테이블:** 기존 DB를 쓰는 경우 Supabase SQL Editor에서 `supabase/migration_courses.sql` 내용을 실행해 주세요. 재생목록 한 번에 등록 기능을 쓰려면 `.env.local`에 `YOUTUBE_API_KEY`(YouTube Data API v3 키)를 추가해야 합니다.
+
+**학부모 리포트:** 리포트 공유 기능을 쓰려면 `supabase/migration_report_token.sql`을 실행해 `profiles`에 `report_token`, `is_report_enabled`, `parent_phone` 컬럼을 추가해 주세요.
+
+**반(Class) 관리·영상 노출/주간과제:** 반 관리 및 영상 일괄 노출/주간과제 기능을 쓰려면 `supabase/migration_classes_and_video_flags.sql`을 실행해 `classes` 테이블, `profiles.class_id`, `videos.is_visible`/`is_weekly_assignment`를 추가해 주세요.
+
 ## Getting Started
 
 First, run the development server:

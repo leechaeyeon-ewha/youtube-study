@@ -168,9 +168,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const p = playerRef.current;
         if (!p) return;
         const rate = p.getPlaybackRate();
-        if (rate > 1.01) {
-          p.setPlaybackRate(1);
-          alert("배속 변경은 허용되지 않습니다. 1배속으로 초기화됩니다.");
+        if (rate > 1.45) {
+          p.setPlaybackRate(1.4);
+          alert("1.5배속 이상은 사용할 수 없습니다. 1.4배속으로 조정됩니다.");
         }
       } catch (_) {
         // ignore

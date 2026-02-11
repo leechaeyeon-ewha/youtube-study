@@ -8,6 +8,15 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
+  report_token: string | null;
+  is_report_enabled: boolean;
+  parent_phone: string | null;
+  class_id: string | null;
+}
+
+interface ClassRow {
+  id: string;
+  title: string;
 }
 
 // Supabase 조인 결과가 videos를 배열로 반환할 수 있어 단일·배열 모두 허용
@@ -38,15 +47,29 @@ export default function AdminDashboardPage() {
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
+
+  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [classProgress, setClassProgress] = useState<Record<string, number>>({});
+  const [newClassTitle, setNewClassTitle] = useState("");
+  const [addClassLoading, setAddClassLoading] = useState(false);
+  const [bulkAssignClassId, setBulkAssignClassId] = useState("");
+  const [bulkAssignVideoIds, setBulkAssignVideoIds] = useState<string[]>([]);
+  const [videosForBulk, setVideosForBulk] = useState<{ id: string; title: string }[]>([]);
+  const [bulkAssignLoading, setBulkAssignLoading] = useState(false);
+  const [bulkAssignMessage, setBulkAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) return;
-    const [profilesRes, assignmentsRes] = await Promise.all([
-      supabase.from("profiles").select("id, full_name, email").eq("role", "student").order("full_name"),
+    const [profilesRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
+      supabase.from("profiles").select("id, full_name, email, report_token, is_report_enabled, parent_phone, class_id").eq("role", "student").order("full_name"),
       supabase
         .from("assignments")
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
         .order("last_watched_at", { ascending: false }),
+      supabase.from("classes").select("id, title").order("title"),
+      supabase.from("videos").select("id, title").order("title"),
     ]);
 
     if (!profilesRes.error) setStudents((profilesRes.data as Profile[]) ?? []);
@@ -59,6 +82,41 @@ export default function AdminDashboardPage() {
       });
       setAssignmentsByUser(byUser);
     }
+    if (!classesRes.error) setClasses((classesRes.data as ClassRow[]) ?? []);
+    if (!videosRes.error) setVideosForBulk((videosRes.data as { id: string; title: string }[]) ?? []);
+
+    if (!profilesRes.error && !assignmentsRes.error && !classesRes.error) {
+      const studentsList = (profilesRes.data as Profile[]) ?? [];
+      const byUser = assignmentsRes.error ? {} : (() => {
+        const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
+        const r: Record<string, AssignmentWithVideo[]> = {};
+        list.forEach((a) => {
+          if (!r[a.user_id]) r[a.user_id] = [];
+          r[a.user_id].push(a);
+        });
+        return r;
+      })();
+      const classList = (classesRes.data as ClassRow[]) ?? [];
+      const progress: Record<string, number> = {};
+      classList.forEach((c) => {
+        const studentIds = studentsList.filter((s) => s.class_id === c.id).map((s) => s.id);
+        if (studentIds.length === 0) {
+          progress[c.id] = 0;
+          return;
+        }
+        let total = 0;
+        let count = 0;
+        studentIds.forEach((uid) => {
+          (byUser[uid] ?? []).forEach((a) => {
+            total += a.progress_percent;
+            count += 1;
+          });
+        });
+        progress[c.id] = count === 0 ? 0 : Math.round((total / count) * 10) / 10;
+      });
+      setClassProgress(progress);
+    }
+
     setLoading(false);
   }
 
@@ -194,6 +252,103 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function handleReportToggle(studentId: string, currentEnabled: boolean) {
+    if (!supabase) return;
+    setReportToggleUserId(studentId);
+    try {
+      await supabase.from("profiles").update({ is_report_enabled: !currentEnabled }).eq("id", studentId);
+      load();
+    } finally {
+      setReportToggleUserId(null);
+    }
+  }
+
+  function copyReportLink(token: string) {
+    const url = typeof window !== "undefined" ? `${window.location.origin}/report/${token}` : "";
+    if (url && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url);
+      alert("리포트 링크가 클립보드에 복사되었습니다. 카톡 등으로 학부모에게 보내주세요.");
+    } else {
+      prompt("아래 링크를 복사하세요.", url);
+    }
+  }
+
+  async function handleAddClass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!supabase || !newClassTitle.trim()) return;
+    setAddClassLoading(true);
+    try {
+      await supabase.from("classes").insert({ title: newClassTitle.trim() });
+      setNewClassTitle("");
+      load();
+    } finally {
+      setAddClassLoading(false);
+    }
+  }
+
+  async function handleDeleteClass(classId: string) {
+    if (!supabase || !confirm("이 반을 삭제할까요? 소속 학생의 반 정보만 해제됩니다.")) return;
+    await supabase.from("profiles").update({ class_id: null }).eq("class_id", classId);
+    await supabase.from("classes").delete().eq("id", classId);
+    load();
+  }
+
+  async function handleStudentClassChange(studentId: string, classId: string | null) {
+    if (!supabase) return;
+    setUpdatingClassId(studentId);
+    try {
+      await supabase.from("profiles").update({ class_id: classId || null }).eq("id", studentId);
+      load();
+    } finally {
+      setUpdatingClassId(null);
+    }
+  }
+
+  async function handleBulkAssignToClass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!supabase || !bulkAssignClassId || bulkAssignVideoIds.length === 0) {
+      setBulkAssignMessage({ type: "error", text: "반과 영상을 선택해 주세요." });
+      return;
+    }
+    setBulkAssignLoading(true);
+    setBulkAssignMessage(null);
+    try {
+      const studentIds = students.filter((s) => s.class_id === bulkAssignClassId).map((s) => s.id);
+      if (studentIds.length === 0) {
+        setBulkAssignMessage({ type: "error", text: "선택한 반에 소속 학생이 없습니다." });
+        setBulkAssignLoading(false);
+        return;
+      }
+      let inserted = 0;
+      for (const videoId of bulkAssignVideoIds) {
+        for (const userId of studentIds) {
+          const { error } = await supabase.from("assignments").insert({
+            user_id: userId,
+            video_id: videoId,
+            is_completed: false,
+            progress_percent: 0,
+            last_position: 0,
+          });
+          if (!error) inserted += 1;
+        }
+      }
+      const className = classes.find((c) => c.id === bulkAssignClassId)?.title ?? "반";
+      setBulkAssignMessage({ type: "success", text: `${className}에 ${inserted}건 배정되었습니다. (이미 있던 건 제외)` });
+      setBulkAssignVideoIds([]);
+      load();
+    } catch (err) {
+      setBulkAssignMessage({ type: "error", text: err instanceof Error ? err.message : "배정 실패" });
+    } finally {
+      setBulkAssignLoading(false);
+    }
+  }
+
+  function toggleBulkVideo(videoId: string) {
+    setBulkAssignVideoIds((prev) =>
+      prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [...prev, videoId]
+    );
+  }
+
   function formatLastWatched(at: string | null) {
     if (!at) return "-";
     const d = new Date(at);
@@ -213,6 +368,138 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
         학생 목록 · 영상 할당 · 모니터링
       </h1>
+
+      {/* 반별 평균 진도율 요약 */}
+      {classes.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
+            반별 평균 진도율
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {classes.map((c) => (
+              <div
+                key={c.id}
+                className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50"
+              >
+                <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
+                  {c.title}
+                </p>
+                <p className="mt-1 text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                  {classProgress[c.id] ?? 0}%
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {students.filter((s) => s.class_id === c.id).length}명
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 반 관리 */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
+          반(Class) 관리
+        </h2>
+        <form onSubmit={handleAddClass} className="mb-4 flex flex-wrap items-end gap-3">
+          <div className="min-w-[160px]">
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              반 이름
+            </label>
+            <input
+              type="text"
+              value={newClassTitle}
+              onChange={(e) => setNewClassTitle(e.target.value)}
+              placeholder="예: 중1-A"
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={addClassLoading || !newClassTitle.trim()}
+            className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {addClassLoading ? "추가 중..." : "반 추가"}
+          </button>
+        </form>
+        {classes.length > 0 && (
+          <ul className="flex flex-wrap gap-2">
+            {classes.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-zinc-800"
+              >
+                <span className="font-medium text-slate-800 dark:text-white">{c.title}</span>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteClass(c.id)}
+                  className="text-red-600 hover:underline dark:text-red-400"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 반에 영상 일괄 배정 */}
+      {classes.length > 0 && videosForBulk.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
+            반에 영상 일괄 배정
+          </h2>
+          <form onSubmit={handleBulkAssignToClass} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                반 선택
+              </label>
+              <select
+                value={bulkAssignClassId}
+                onChange={(e) => setBulkAssignClassId(e.target.value)}
+                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              >
+                <option value="">선택</option>
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                영상 선택 (복수 선택)
+              </label>
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
+                {videosForBulk.map((v) => (
+                  <label key={v.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-800">
+                    <input
+                      type="checkbox"
+                      checked={bulkAssignVideoIds.includes(v.id)}
+                      onChange={() => toggleBulkVideo(v.id)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="truncate text-sm text-slate-800 dark:text-white">{v.title}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {bulkAssignMessage && (
+              <p className={bulkAssignMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}>
+                {bulkAssignMessage.text}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={bulkAssignLoading || !bulkAssignClassId || bulkAssignVideoIds.length === 0}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {bulkAssignLoading ? "배정 중..." : "선택 영상 선택 반에 배정"}
+            </button>
+          </form>
+        </section>
+      )}
 
       {/* 학생 등록 */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -278,6 +565,19 @@ export default function AdminDashboardPage() {
                     <span className="font-semibold text-slate-900 dark:text-white">
                       {s.full_name || s.email || s.id.slice(0, 8)}
                     </span>
+                    <select
+                      value={s.class_id ?? ""}
+                      onChange={(e) => handleStudentClassChange(s.id, e.target.value || null)}
+                      disabled={updatingClassId === s.id}
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                    >
+                      <option value="">반 없음</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={() => {
@@ -297,8 +597,45 @@ export default function AdminDashboardPage() {
                     >
                       {deleteUserId === s.id ? "삭제 중..." : "삭제(퇴원)"}
                     </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-slate-600 dark:text-slate-400">리포트 공유</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={s.is_report_enabled ?? false}
+                        disabled={reportToggleUserId !== null}
+                        onClick={() => handleReportToggle(s.id, s.is_report_enabled ?? false)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+                          s.is_report_enabled
+                            ? "border-indigo-500 bg-indigo-600"
+                            : "border-slate-300 bg-slate-200 dark:border-zinc-600 dark:bg-zinc-700"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                            s.is_report_enabled ? "translate-x-5" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </div>
                 </div>
+
+                {(s.is_report_enabled && s.report_token) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3 dark:bg-zinc-800">
+                    <span className="text-sm text-slate-600 dark:text-slate-400">학부모 리포트 URL:</span>
+                    <code className="max-w-full truncate rounded bg-slate-200 px-2 py-1 text-xs dark:bg-zinc-700">
+                      {typeof window !== "undefined" ? `${window.location.origin}/report/${s.report_token}` : `/report/${s.report_token}`}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyReportLink(s.report_token!)}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                    >
+                      링크 복사
+                    </button>
+                  </div>
+                )}
 
                 {assignUserId === s.id && (
                   <form onSubmit={handleAssignVideo} className="mt-4 flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-4 dark:bg-zinc-800">

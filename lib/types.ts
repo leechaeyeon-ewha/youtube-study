@@ -6,12 +6,34 @@ export interface Profile {
   full_name?: string | null;
   display_name?: string | null;
   email?: string | null;
+  report_token?: string | null;
+  is_report_enabled?: boolean;
+  parent_phone?: string | null;
+  class_id?: string | null;
+}
+
+export interface Course {
+  id: string;
+  title: string;
+  description?: string | null;
+  playlist_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Class {
+  id: string;
+  title: string;
+  created_at?: string;
 }
 
 export interface Video {
   id: string;
   title: string;
   video_id: string; // YouTube ID
+  course_id?: string | null;
+  is_visible?: boolean;
+  is_weekly_assignment?: boolean;
   created_at?: string;
 }
 

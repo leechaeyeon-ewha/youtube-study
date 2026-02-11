@@ -49,7 +49,7 @@ export default function StudentPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, videos(id, title, video_id)")
+        .select("id, is_completed, progress_percent, videos(id, title, video_id, is_visible)")
         .eq("user_id", user.id);
 
       if (fetchError) {
@@ -58,7 +58,10 @@ export default function StudentPage() {
         return;
       }
 
-      setAssignments((data as AssignmentRow[]) ?? []);
+      const list = (data ?? []) as (AssignmentRow & { videos?: { is_visible?: boolean } | null })[];
+      setAssignments(
+        list.filter((a) => (a.videos as { is_visible?: boolean } | null)?.is_visible !== false)
+      );
       setLoading(false);
     }
 
@@ -85,9 +88,17 @@ export default function StudentPage() {
     <div className="min-h-screen bg-slate-50 py-8 px-4 dark:bg-zinc-950">
       <div className="mx-auto max-w-4xl">
         <header className="mb-8">
-          <p className="mb-2 text-sm font-medium text-indigo-600 dark:text-indigo-400">
-            김현정 영어전문학원
-          </p>
+          <div className="mb-3 flex items-center gap-3">
+            <img
+              src="/logo.png"
+              alt="로고"
+              className="h-auto w-[7rem] shrink-0 object-contain sm:w-[7.5rem]"
+              aria-hidden
+            />
+            <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
+              영어는 김현정 영어전문학원
+            </p>
+          </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">
             안녕하세요, {fullName} 학생님
           </h1>

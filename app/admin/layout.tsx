@@ -76,9 +76,9 @@ export default function AdminLayout({
           <div className="flex items-center gap-6">
             <Link
               href="/admin"
-              className="text-lg font-bold text-slate-800 dark:text-white"
+              className="text-lg font-bold text-slate-800 dark:text-white hover:underline"
             >
-              김현정 영어전문학원
+              영어는 김현정 영어전문학원
             </Link>
             <span className="text-slate-400 dark:text-zinc-500">|</span>
             <span className="text-sm font-medium text-slate-600 dark:text-slate-400">

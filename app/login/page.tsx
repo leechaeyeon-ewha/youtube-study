@@ -92,9 +92,13 @@ export default function LoginPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-          <p className="mb-2 text-center text-sm font-medium text-indigo-600 dark:text-indigo-400">
-            김현정 영어전문학원
-          </p>
+          <div className="mb-3 flex justify-center">
+            <img
+              src="/logo.png"
+              alt="영어는 김현정 영어전문학원"
+              className="h-auto w-full max-w-[11rem] object-contain"
+            />
+          </div>
           <h1 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
             학원 학습관
           </h1>
@@ -127,8 +131,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-4 flex justify-center">
+          <img
+            src="/logo.png"
+            alt="영어는 김현정 영어전문학원"
+            className="h-auto w-full max-w-[11rem] object-contain"
+          />
+        </div>
         <p className="mb-2 text-center text-sm font-medium text-indigo-600 dark:text-indigo-400">
-          김현정 영어전문학원
+          영어는 김현정 영어전문학원
         </p>
         <button
           type="button"
