@@ -43,6 +43,8 @@ export default function AdminVideosPage() {
   const [playlistMessage, setPlaylistMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"playlist" | "single">("playlist");
+  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
@@ -119,6 +121,12 @@ export default function AdminVideosPage() {
   }, [assignModalOpen, settingsModalOpen]);
 
   const allVideos = courseGroups.flatMap((g) => g.videos);
+  const playlistGroups = courseGroups.filter((g) => g.courseId !== null);
+  const standaloneVideos = allVideos.filter((v) => !v.course_id);
+  const displayedVideos =
+    activeTab === "playlist"
+      ? playlistGroups.flatMap((g) => g.videos)
+      : standaloneVideos;
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -224,10 +232,17 @@ export default function AdminVideosPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedVideoIds.length === allVideos.length) {
-      setSelectedVideoIds([]);
+    if (displayedVideos.length === 0) return;
+    const allSelected = displayedVideos.every((v) =>
+      selectedVideoIds.includes(v.id)
+    );
+    if (allSelected) {
+      const idsToUnselect = new Set(displayedVideos.map((v) => v.id));
+      setSelectedVideoIds((prev) => prev.filter((id) => !idsToUnselect.has(id)));
     } else {
-      setSelectedVideoIds(allVideos.map((v) => v.id));
+      setSelectedVideoIds((prev) => [
+        ...new Set([...prev, ...displayedVideos.map((v) => v.id)]),
+      ]);
     }
   }
 
@@ -399,14 +414,45 @@ export default function AdminVideosPage() {
         </button>
       </form>
 
-      {/* 등록된 영상: 강좌별 그룹 + 할당/설정 */}
+      {/* 등록된 재생목록 / 등록된 영상: 탭 + 할당/설정 */}
       <section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold text-slate-800 dark:text-white">등록된 영상 (강좌별)</h2>
-          {allVideos.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("playlist")}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                activeTab === "playlist"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              등록된 재생목록
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("single")}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                activeTab === "single"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              등록된 영상
+            </button>
+          </div>
+          {displayedVideos.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-                <input type="checkbox" checked={selectedVideoIds.length === allVideos.length && allVideos.length > 0} onChange={toggleSelectAll} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                <input
+                  type="checkbox"
+                  checked={
+                    displayedVideos.length > 0 &&
+                    displayedVideos.every((v) => selectedVideoIds.includes(v.id))
+                  }
+                  onChange={toggleSelectAll}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
                 전체 선택
               </label>
               {selectedVideoIds.length > 0 && (
@@ -433,46 +479,136 @@ export default function AdminVideosPage() {
         {bulkMessage && <p className={`mb-4 text-sm ${bulkMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{bulkMessage.text}</p>}
         {loading ? (
           <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" /></div>
-        ) : allVideos.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-slate-400">등록된 영상이 없습니다.</div>
-        ) : (
-          <div className="space-y-8">
-            {courseGroups.map((group) => {
+        ) : displayedVideos.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-slate-400">
+            {activeTab === "playlist" ? "등록된 재생목록이 없습니다." : "등록된 영상이 없습니다."}
+          </div>
+        ) : activeTab === "playlist" ? (
+          <div className="space-y-4">
+            {playlistGroups.map((group) => {
               const ids = group.videos.map((v) => v.id);
-              const allInGroupSelected = ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
+              const allInGroupSelected =
+                ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
+              const isExpanded = expandedCourseId === group.courseId;
               return (
-                <div key={group.courseId ?? "none"} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="mb-3 flex items-center gap-3 border-b border-slate-100 pb-3 dark:border-zinc-700">
-                    <input
-                      type="checkbox"
-                      checked={allInGroupSelected}
-                      onChange={() => toggleSelectCourse(group.courseId)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <h3 className="text-base font-semibold text-slate-800 dark:text-white">{group.courseTitle}</h3>
-                    <span className="text-sm text-slate-500 dark:text-slate-400">({group.videos.length}개 영상)</span>
-                  </div>
-                  <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {group.videos.map((v) => (
-                      <li key={v.id} className="flex flex-col overflow-hidden rounded-xl border border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/50">
-                        <div className="flex items-start gap-2 p-2">
-                          <input type="checkbox" checked={selectedVideoIds.includes(v.id)} onChange={() => toggleSelectVideo(v.id)} className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                        </div>
-                        <div className="aspect-video w-full shrink-0 overflow-hidden bg-slate-200 dark:bg-zinc-700">
-                          <img src={getThumbnailUrl(v.video_id)} alt="" className="h-full w-full object-cover" />
-                        </div>
-                        <div className="flex flex-1 flex-col p-3">
-                          <h4 className="font-medium text-slate-900 dark:text-white line-clamp-2">{v.title}</h4>
-                          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{v.video_id}</p>
-                          <button type="button" onClick={() => handleDelete(v.id)} className="mt-2 self-start rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">삭제</button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                <div
+                  key={group.courseId ?? "none"}
+                  className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedCourseId(
+                        isExpanded ? null : (group.courseId as string | null)
+                      )
+                    }
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 text-left dark:border-zinc-700"
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={allInGroupSelected}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleSelectCourse(group.courseId);
+                        }}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <div>
+                        <h3 className="text-base font-semibold text-slate-800 dark:text-white">
+                          {group.courseTitle}
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          재생목록 내 영상 {group.videos.length}개
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-sm text-slate-500 dark:text-slate-400">
+                      {isExpanded ? "접기 ▲" : "영상 보기 ▼"}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <ul className="divide-y divide-slate-100 dark:divide-zinc-800">
+                      {group.videos.map((v) => (
+                        <li
+                          key={v.id}
+                          className="flex items-center gap-3 px-4 py-3 bg-slate-50/60 dark:bg-zinc-900"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedVideoIds.includes(v.id)}
+                            onChange={() => toggleSelectVideo(v.id)}
+                            className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
+                            <img
+                              src={getThumbnailUrl(v.video_id)}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                              {v.title}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              {v.video_id}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(v.id)}
+                            className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                          >
+                            삭제
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               );
             })}
           </div>
+        ) : (
+          <ul className="space-y-3">
+            {standaloneVideos.map((v) => (
+              <li
+                key={v.id}
+                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedVideoIds.includes(v.id)}
+                  onChange={() => toggleSelectVideo(v.id)}
+                  className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
+                  <img
+                    src={getThumbnailUrl(v.video_id)}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                    {v.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {v.video_id}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(v.id)}
+                  className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
