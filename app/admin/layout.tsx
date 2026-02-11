@@ -27,22 +27,21 @@ export default function AdminLayout({
         setLoading(false);
         return;
       }
-      const { data: { user } } = await client.auth.getUser();
-      if (!user) {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session?.access_token) {
         router.replace("/login");
         return;
       }
-      const { data: profileData, error } = await client
-        .from("profiles")
-        .select("id, role, full_name, email")
-        .eq("id", user.id)
-        .single();
-      if (error || !profileData) {
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) {
         router.replace("/");
         setLoading(false);
         return;
       }
-      if ((profileData as Profile).role !== "admin") {
+      const profileData = await res.json();
+      if (profileData?.role !== "admin") {
         router.replace("/");
         setLoading(false);
         return;

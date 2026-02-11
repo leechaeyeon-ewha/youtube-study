@@ -20,17 +20,20 @@ export default function Home() {
 
   useEffect(() => {
     async function redirect() {
-      const client = supabase!; // 위에서 null 체크 완료
-      const { data: { user } } = await client.auth.getUser();
-      if (!user) {
+      const client = supabase!;
+      const { data: { session } } = await client.auth.getSession();
+      if (!session?.access_token) {
         router.replace("/login");
         return;
       }
-      const { data: profile } = await client
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) {
+        router.replace("/login");
+        return;
+      }
+      const profile = await res.json();
       if (profile?.role === "admin") {
         router.replace("/admin");
       } else {
