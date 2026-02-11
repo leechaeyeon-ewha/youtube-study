@@ -268,7 +268,8 @@ export default function AdminVideosPage() {
     let userIds: string[] = [];
     if (settingsTarget === "all") {
       const { data } = await supabase.from("assignments").select("user_id").in("video_id", selectedVideoIds);
-      userIds = [...new Set((data ?? []).map((a: { user_id: string }) => a.user_id))];
+      const rows = (data ?? []) as { user_id: string }[];
+      userIds = [...new Set(rows.map((a) => a.user_id))];
     } else if (settingsTarget === "class") {
       if (!settingsClassId) {
         setSettingsMessage({ type: "error", text: "반을 선택해 주세요." });
