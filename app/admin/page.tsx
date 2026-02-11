@@ -63,9 +63,11 @@ export default function AdminDashboardPage() {
   async function load() {
     if (!supabase) return;
     const { data: { session } } = await supabase.auth.getSession();
-    const authHeader = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const authHeaders: Record<string, string> = session?.access_token
+      ? { Authorization: `Bearer ${session.access_token}` }
+      : {};
     const [studentsRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
-      fetch("/api/admin/students", { headers: authHeader }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
