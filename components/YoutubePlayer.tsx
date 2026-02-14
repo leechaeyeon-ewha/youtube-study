@@ -4,13 +4,13 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 
 const SKIP_TOLERANCE_SEC = 0.5;
-const MAX_PLAYBACK_RATE = 1.4;
+const LOCKED_PLAYBACK_RATE = 1;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 const RATE_CHECK_INTERVAL_MS = 50;
 const RATE_CHECK_INTERVAL_MOBILE_MS = 16;
 const RATE_FALLBACK_CHECK_MS = 1000;
-const RATE_TOAST_MESSAGE = "우리 학원 시스템에서는 1.4배속까지만 허용됩니다.";
+const RATE_TOAST_MESSAGE = "배속 변경은 허용되지 않습니다. 1배속만 사용 가능합니다.";
 const TOAST_DURATION_MS = 3000;
 
 declare global {
@@ -153,6 +153,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
+            fs: 0,
             start: Math.floor(initialPosition),
           },
           events: {
@@ -175,9 +176,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
                   const p = playerRef.current;
                   if (!p) return;
                   const r = p.getPlaybackRate();
-                  const capped = typeof r === "number" && Number.isFinite(r) ? Math.min(r, MAX_PLAYBACK_RATE) : MAX_PLAYBACK_RATE;
-                  if (r > MAX_PLAYBACK_RATE) p.setPlaybackRate(MAX_PLAYBACK_RATE);
-                  else if (r !== capped) p.setPlaybackRate(capped);
+                  if (typeof r !== "number" || !Number.isFinite(r) || r !== LOCKED_PLAYBACK_RATE) {
+                    p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
+                  }
                 } catch {
                   // ignore
                 }
@@ -235,20 +236,15 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const p = playerRef.current;
         if (!p) return;
         const rate = p.getPlaybackRate();
-        const capped =
-          typeof rate === "number" && Number.isFinite(rate)
-            ? Math.min(Math.max(rate, 0.25), MAX_PLAYBACK_RATE)
-            : 1;
-
-        if (rate > MAX_PLAYBACK_RATE) {
-          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
-          p.setPlaybackRate(MAX_PLAYBACK_RATE);
+        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
+          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
+          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
           if (isTouch) {
             [0, 20, 50, 100, 150].forEach((ms) => {
               setTimeout(() => {
                 try {
                   const px = playerRef.current;
-                  if (px && px.getPlaybackRate() > MAX_PLAYBACK_RATE) px.setPlaybackRate(MAX_PLAYBACK_RATE);
+                  if (px && px.getPlaybackRate() !== LOCKED_PLAYBACK_RATE) px.setPlaybackRate(LOCKED_PLAYBACK_RATE);
                 } catch {
                   // ignore
                 }
@@ -258,8 +254,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           showRateToast();
         } else {
           lastKnownRateRef.current = rate;
-          if (rate !== capped) p.setPlaybackRate(capped);
-          else if (isTouch) p.setPlaybackRate(capped);
+          if (isTouch) p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
         }
       } catch (_: unknown) {
         // ignore
@@ -303,9 +298,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         if (!p) return;
         if (p.getPlayerState() !== 1) return;
         const rate = p.getPlaybackRate();
-        if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
-          p.setPlaybackRate(MAX_PLAYBACK_RATE);
-          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
+        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
+          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
+          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
           showRateToast();
         }
       } catch (_: unknown) {
@@ -325,9 +320,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         if (!p) return;
 
         const rate = p.getPlaybackRate();
-        if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
-          p.setPlaybackRate(MAX_PLAYBACK_RATE);
-          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
+        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
+          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
+          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
           showRateToast();
         }
 
