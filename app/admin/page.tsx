@@ -333,10 +333,12 @@ export default function AdminDashboardPage() {
     }
   }
 
-  /** 재원생 → 퇴원 처리 (상태만 변경, 계정 유지) */
+  /** 재원생 → 퇴원 처리 (상태만 변경, 계정 유지) — 한 명만 대상 */
   async function handleWithdraw(userId: string, fullName: string) {
+    const targetId = typeof userId === "string" ? userId.trim() : "";
+    if (!targetId) return;
     if (!confirm(`"${fullName}" 학생을 퇴원 처리하시겠습니까?\n퇴원생 목록으로 이동하며, 계정과 진도 기록은 유지됩니다.`)) return;
-    setDeleteUserId(userId);
+    setDeleteUserId(targetId);
     setDeleteLoading(true);
     try {
       const { data: { session } } = await supabase!.auth.getSession();
@@ -346,7 +348,7 @@ export default function AdminDashboardPage() {
           "Content-Type": "application/json",
           Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
         },
-        body: JSON.stringify({ user_id: userId, enrollment_status: "withdrawn" }),
+        body: JSON.stringify({ user_id: targetId, enrollment_status: "withdrawn" }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -358,7 +360,7 @@ export default function AdminDashboardPage() {
       }
       dashboardCache = null;
       await load();
-      setEnrollmentTab("withdrawn");
+      // 재원생 탭 유지 → 남은 학생들이 그대로 보이도록 (퇴원생은 퇴원생 탭에서 확인)
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "퇴원 처리에 실패했습니다.");
     } finally {
@@ -397,10 +399,12 @@ export default function AdminDashboardPage() {
     }
   }
 
-  /** 퇴원생 완전 삭제 (계정·진도 기록 삭제) */
+  /** 퇴원생 완전 삭제 (계정·진도 기록 삭제) — 한 명만 대상 */
   async function handleDeleteStudent(userId: string, fullName: string) {
+    const targetId = typeof userId === "string" ? userId.trim() : "";
+    if (!targetId) return;
     if (!confirm(`"${fullName}" 학생을 완전 삭제하시겠습니까?\n계정과 진도 기록이 모두 삭제되며, 복구할 수 없습니다.`)) return;
-    setDeleteUserId(userId);
+    setDeleteUserId(targetId);
     setDeleteLoading(true);
     try {
       const { data: { session } } = await supabase!.auth.getSession();
@@ -410,7 +414,7 @@ export default function AdminDashboardPage() {
           "Content-Type": "application/json",
           Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
         },
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ user_id: targetId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "삭제 실패");
@@ -696,7 +700,11 @@ export default function AdminDashboardPage() {
                       <>
                         <button
                           type="button"
-                          onClick={() => handleWithdraw(s.id, s.full_name || s.email || "이 학생")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleWithdraw(s.id, s.full_name || s.email || "이 학생");
+                          }}
                           disabled={deleteLoading}
                           className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-200 disabled:opacity-50 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
                         >
@@ -704,7 +712,11 @@ export default function AdminDashboardPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteStudent(s.id, s.full_name || s.email || "이 학생");
+                          }}
                           disabled={deleteLoading}
                           className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
                         >
@@ -715,7 +727,11 @@ export default function AdminDashboardPage() {
                       <>
                         <button
                           type="button"
-                          onClick={() => handleReEnroll(s.id)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleReEnroll(s.id);
+                          }}
                           disabled={reEnrollUserId !== null}
                           className="rounded-lg bg-green-100 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/40 dark:text-green-300 dark:hover:bg-green-900/60"
                         >
@@ -723,7 +739,11 @@ export default function AdminDashboardPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteStudent(s.id, s.full_name || s.email || "이 학생");
+                          }}
                           disabled={deleteLoading}
                           className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
                         >

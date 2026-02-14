@@ -199,11 +199,13 @@ export async function PATCH(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
-  const status = body.enrollment_status === "withdrawn" ? "withdrawn" : "enrolled";
+  // 한 명만 대상: user_id는 반드시 문자열 하나 (배열·객체 등이 오면 거부)
+  const rawUserId = body.user_id;
+  const userId =
+    typeof rawUserId === "string" ? rawUserId.trim() : "";
 
-  if (!userId) {
-    return NextResponse.json({ error: "대상 학생을 지정해 주세요." }, { status: 400 });
+  if (!userId || Array.isArray(rawUserId)) {
+    return NextResponse.json({ error: "대상 학생을 한 명만 지정해 주세요." }, { status: 400 });
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -220,14 +222,21 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "관리자 계정은 변경할 수 없습니다." }, { status: 400 });
   }
 
-  const { error: updateError } = await supabase
+  const { data: updatedRows, error: updateError } = await supabase
     .from("profiles")
     .update({ enrollment_status: status })
-    .eq("id", userId);
+    .eq("id", userId)
+    .select("id");
 
   if (updateError) {
     return NextResponse.json(
       { error: updateError.message.includes("enrollment_status") ? "enrollment_status 컬럼이 없습니다. Supabase에서 migration_enrollment_status.sql을 실행해 주세요." : updateError.message },
+      { status: 500 }
+    );
+  }
+  if (!updatedRows || updatedRows.length !== 1) {
+    return NextResponse.json(
+      { error: "퇴원/재원 처리 대상이 한 명이 아니어서 중단했습니다. 다시 시도해 주세요." },
       { status: 500 }
     );
   }
@@ -248,10 +257,12 @@ export async function DELETE(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
+  // 한 명만 삭제: user_id는 반드시 문자열 하나 (배열 등이 오면 거부)
+  const rawUserId = body.user_id;
+  const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
 
-  if (!userId) {
-    return NextResponse.json({ error: "삭제할 학생을 지정해 주세요." }, { status: 400 });
+  if (!userId || Array.isArray(rawUserId)) {
+    return NextResponse.json({ error: "삭제할 학생을 한 명만 지정해 주세요." }, { status: 400 });
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -270,7 +281,21 @@ export async function DELETE(req: Request) {
   }
 
   await supabase.from("assignments").delete().eq("user_id", userId);
-  await supabase.from("profiles").delete().eq("id", userId);
+  const { data: deletedProfiles, error: deleteProfileError } = await supabase
+    .from("profiles")
+    .delete()
+    .eq("id", userId)
+    .select("id");
+
+  if (deleteProfileError) {
+    return NextResponse.json({ error: deleteProfileError.message }, { status: 500 });
+  }
+  if (!deletedProfiles || deletedProfiles.length !== 1) {
+    return NextResponse.json(
+      { error: "삭제 대상이 한 명이 아니어서 중단했습니다. 다시 시도해 주세요." },
+      { status: 500 }
+    );
+  }
 
   const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
 
