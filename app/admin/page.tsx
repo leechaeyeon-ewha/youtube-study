@@ -93,6 +93,7 @@ export default function AdminDashboardPage() {
   const [libraryGroups, setLibraryGroups] = useState<LibraryCourseGroup[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [assignFromLibraryVideoId, setAssignFromLibraryVideoId] = useState<string | null>(null);
+  const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) return;
@@ -827,52 +828,72 @@ export default function AdminDashboardPage() {
                       onClick={() => {
                         const next = !showAssignFromLibrary;
                         setShowAssignFromLibrary(next);
-                        if (next) loadLibrary();
+                        if (next) {
+                          loadLibrary();
+                          setExpandedLibraryCourseKey(null);
+                        }
                       }}
                       className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
                     >
                       {showAssignFromLibrary ? "등록된 목록 접기" : "등록된 재생목록/동영상에서 할당"}
                     </button>
                     {showAssignFromLibrary && (
-                      <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-zinc-600 dark:bg-zinc-800">
+                      <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-zinc-600 dark:bg-zinc-800">
                         {libraryLoading ? (
                           <p className="p-4 text-sm text-slate-500 dark:text-slate-400">불러오는 중...</p>
                         ) : libraryGroups.length === 0 ? (
                           <p className="p-4 text-sm text-slate-500 dark:text-slate-400">등록된 재생목록/동영상이 없습니다.</p>
                         ) : (
                           <ul className="divide-y divide-slate-200 dark:divide-zinc-600">
-                            {libraryGroups.map((grp) => (
-                              <li key={grp.courseId ?? "single"}>
-                                <div className="bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 dark:bg-zinc-700 dark:text-slate-300">
-                                  {grp.courseTitle}
-                                </div>
-                                <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-                                  {grp.videos.map((v) => (
-                                    <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                                      <span className="min-w-0 truncate text-sm text-slate-800 dark:text-slate-200" title={v.title}>
-                                        {v.title}
-                                      </span>
-                                      <a
-                                        href={`https://www.youtube.com/watch?v=${v.video_id}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
-                                      >
-                                        보기
-                                      </a>
-                                      <button
-                                        type="button"
-                                        disabled={assignFromLibraryVideoId === v.id}
-                                        onClick={() => handleAssignFromLibrary(v.id)}
-                                        className="shrink-0 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                                      >
-                                        {assignFromLibraryVideoId === v.id ? "할당 중..." : "할당"}
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </li>
-                            ))}
+                            {libraryGroups.map((grp) => {
+                              const courseKey = grp.courseId ?? "single";
+                              const isExpanded = expandedLibraryCourseKey === courseKey;
+                              return (
+                                <li key={courseKey}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
+                                    className="flex w-full items-center justify-between bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  >
+                                    <span>{grp.courseTitle}</span>
+                                    <span className="text-slate-400 dark:text-slate-500">
+                                      {grp.videos.length}개 · {isExpanded ? "접기" : "펼치기"}
+                                    </span>
+                                  </button>
+                                  {isExpanded && (
+                                    <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+                                      {grp.videos.map((v) => (
+                                        <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                                          <span className="min-w-0 truncate text-sm text-slate-800 dark:text-slate-200" title={v.title}>
+                                            {v.title}
+                                          </span>
+                                          <a
+                                            href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                                          >
+                                            보기
+                                          </a>
+                                          <button
+                                            type="button"
+                                            disabled={assignFromLibraryVideoId === v.id}
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              handleAssignFromLibrary(v.id);
+                                            }}
+                                            className="shrink-0 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                                          >
+                                            {assignFromLibraryVideoId === v.id ? "할당 중..." : "할당"}
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              );
+                            })}
                           </ul>
                         )}
                       </div>
