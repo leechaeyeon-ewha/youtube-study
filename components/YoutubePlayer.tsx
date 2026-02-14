@@ -7,7 +7,7 @@ const SKIP_TOLERANCE_SEC = 0.5;
 const MAX_PLAYBACK_RATE = 1.4;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
-const RATE_CHECK_INTERVAL_MS = 400;
+const RATE_CHECK_INTERVAL_MS = 100;
 
 declare global {
   interface Window {
@@ -163,15 +163,19 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             },
             onStateChange: (e: { data: number }) => {
               if (!mounted || !playerRef.current) return;
-              if (e.data === 1) {
-                try {
-                  const r = playerRef.current.getPlaybackRate();
-                  if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
-                    playerRef.current.setPlaybackRate(MAX_PLAYBACK_RATE);
-                  }
-                } catch {
-                  // ignore
+              try {
+                const p = playerRef.current;
+                const r = p.getPlaybackRate();
+                if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
+                  p.setPlaybackRate(MAX_PLAYBACK_RATE);
+                  setTimeout(() => {
+                    if (playerRef.current && playerRef.current.getPlaybackRate() > MAX_PLAYBACK_RATE) {
+                      playerRef.current.setPlaybackRate(MAX_PLAYBACK_RATE);
+                    }
+                  }, 100);
                 }
+              } catch {
+                // ignore
               }
             },
           },
