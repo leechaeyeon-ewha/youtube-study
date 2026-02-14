@@ -52,7 +52,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = await req.json();
+  let body: { full_name?: string; password?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "요청 본문을 읽을 수 없습니다." }, { status: 400 });
+  }
   const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
@@ -85,26 +90,56 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "사용자 생성에 실패했습니다." }, { status: 500 });
   }
 
-  // 트리거가 없거나 실패해도 목록에 나오도록 upsert (role 반드시 'student', 재원생)
-  const { error: upsertError } = await supabase
+  // 트리거가 이미 프로필을 만들었을 수 있음 → 있으면 update, 없으면 insert
+  const profileRow = {
+    id: userData.user.id,
+    role: "student" as const,
+    full_name: fullName,
+    email,
+  };
+
+  const { data: existing } = await supabase
     .from("profiles")
-    .upsert(
-      {
-        id: userData.user.id,
+    .select("id")
+    .eq("id", userData.user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
         role: "student",
         full_name: fullName,
         email,
-        enrollment_status: "enrolled",
-      },
-      { onConflict: "id" }
-    );
-
-  if (upsertError) {
-    return NextResponse.json(
-      { error: "프로필 저장에 실패했습니다." },
-      { status: 500 }
-    );
+      })
+      .eq("id", userData.user.id);
+    if (updateError) {
+      return NextResponse.json(
+        { error: `프로필 저장에 실패했습니다. ${updateError.message}`.trim() },
+        { status: 500 }
+      );
+    }
+  } else {
+    const { error: insertError } = await supabase
+      .from("profiles")
+      .insert(profileRow);
+    if (insertError) {
+      const msg = insertError.message ?? "";
+      const hint = msg.includes("enrollment_status")
+        ? " Supabase에서 migration_enrollment_status.sql을 실행해 주세요."
+        : "";
+      return NextResponse.json(
+        { error: `프로필 저장에 실패했습니다.${hint} ${msg}`.trim() },
+        { status: 500 }
+      );
+    }
   }
+
+  // enrollment_status 컬럼이 있으면 재원생으로 설정 (마이그레이션 적용된 경우)
+  await supabase
+    .from("profiles")
+    .update({ enrollment_status: "enrolled" })
+    .eq("id", userData.user.id);
 
   return NextResponse.json({
     id: userData.user.id,

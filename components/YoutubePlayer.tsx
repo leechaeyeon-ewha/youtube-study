@@ -3,9 +3,11 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 
-const SKIP_TOLERANCE_SEC = 2;
+const SKIP_TOLERANCE_SEC = 0.5;
+const MAX_PLAYBACK_RATE = 1.4;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
+const RATE_CHECK_INTERVAL_MS = 400;
 
 declare global {
   interface Window {
@@ -149,9 +151,26 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
               playerRef.current = event.target;
               const p = event.target;
               if (initialPosition > 0) p.seekTo(initialPosition, true);
+              try {
+                p.setPlaybackRate(1);
+              } catch {
+                // ignore
+              }
               setReady(true);
             },
-            onStateChange: () => {},
+            onStateChange: (e: { data: number }) => {
+              if (!mounted || !playerRef.current) return;
+              if (e.data === 1) {
+                try {
+                  const r = playerRef.current.getPlaybackRate();
+                  if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
+                    playerRef.current.setPlaybackRate(MAX_PLAYBACK_RATE);
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+            },
           },
         }) as unknown as YTPlayer;
       })
@@ -167,6 +186,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, [isClient, videoId, initialPosition]);
 
+  const lastRateAlertRef = useRef(0);
+
   useEffect(() => {
     if (!ready || !assignmentId) return;
 
@@ -175,14 +196,18 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const p = playerRef.current;
         if (!p) return;
         const rate = p.getPlaybackRate();
-        if (rate > 1.45) {
-          p.setPlaybackRate(1.4);
-          alert("1.5배속 이상은 사용할 수 없습니다. 1.4배속으로 조정됩니다.");
+        if (typeof rate !== "number" || !Number.isFinite(rate) || rate > MAX_PLAYBACK_RATE) {
+          p.setPlaybackRate(MAX_PLAYBACK_RATE);
+          const now = Date.now();
+          if (now - lastRateAlertRef.current > 3000) {
+            lastRateAlertRef.current = now;
+            alert("1.4배속까지만 사용할 수 있습니다. 1.4배속으로 조정됩니다.");
+          }
         }
       } catch (_: unknown) {
         // ignore
       }
-    }, 1000);
+    }, RATE_CHECK_INTERVAL_MS);
 
     return () => clearInterval(interval);
   }, [ready, assignmentId]);
@@ -194,6 +219,11 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       try {
         const p = playerRef.current;
         if (!p) return;
+
+        const rate = p.getPlaybackRate();
+        if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
+          p.setPlaybackRate(MAX_PLAYBACK_RATE);
+        }
 
         const state = p.getPlayerState();
         if (state !== 1) return;
