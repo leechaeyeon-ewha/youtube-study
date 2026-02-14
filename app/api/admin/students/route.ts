@@ -29,14 +29,51 @@ export async function GET(req: Request) {
     );
   }
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data, error } = await supabase
+
+  const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id";
+  let data: Record<string, unknown>[] | null = null;
+
+  const { data: withStatus, error: errWith } = await supabase
     .from("profiles")
-    .select("id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, enrollment_status")
+    .select(`${baseSelect}, enrollment_status`)
     .eq("role", "student")
     .order("full_name");
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if (errWith) {
+    const msg = errWith.message ?? "";
+    const { data: withoutStatus, error: errWithout } = await supabase
+      .from("profiles")
+      .select(baseSelect)
+      .eq("role", "student")
+      .order("full_name");
+
+    if (errWithout) {
+      const { data: minimal, error: errMinimal } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .eq("role", "student")
+        .order("full_name");
+      if (errMinimal) {
+        return NextResponse.json({ error: errMinimal.message }, { status: 500 });
+      }
+      data = (minimal ?? []).map((row) => ({
+        ...row,
+        report_token: null,
+        is_report_enabled: false,
+        parent_phone: null,
+        class_id: null,
+        enrollment_status: "enrolled",
+      }));
+    } else {
+      data = (withoutStatus ?? []).map((row) => ({
+        ...row,
+        enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
+      }));
+    }
+  } else {
+    data = withStatus ?? [];
   }
+
   return NextResponse.json(data ?? []);
 }
 
