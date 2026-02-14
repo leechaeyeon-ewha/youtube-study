@@ -147,7 +147,6 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
-            fs: 0,
             start: Math.floor(initialPosition),
           },
           events: {
