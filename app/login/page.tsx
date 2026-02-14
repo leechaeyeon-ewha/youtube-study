@@ -275,6 +275,14 @@ function LoginPageContent() {
             >
               {loading ? "로그인 중..." : "로그인"}
             </button>
+            <p className="text-center">
+              <a
+                href="/forgot-password"
+                className="text-sm text-slate-500 underline hover:text-slate-700 dark:text-slate-400 dark:hover:text-white"
+              >
+                비밀번호를 잊으셨나요?
+              </a>
+            </p>
           </form>
         )}
       </div>

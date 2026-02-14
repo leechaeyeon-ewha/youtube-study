@@ -67,6 +67,7 @@ export default function AdminLayout({
   const nav = [
     { href: "/admin", label: "대시보드" },
     { href: "/admin/videos", label: "영상 관리" },
+    { href: "/admin/classes", label: "반 관리" },
     { href: "/admin/assign", label: "배정 목록" },
   ];
 

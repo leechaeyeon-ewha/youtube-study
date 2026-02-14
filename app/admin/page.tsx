@@ -12,6 +12,7 @@ interface Profile {
   is_report_enabled: boolean;
   parent_phone: string | null;
   class_id: string | null;
+  enrollment_status?: "enrolled" | "withdrawn";
 }
 
 interface ClassRow {
@@ -33,6 +34,15 @@ interface AssignmentWithVideo {
     | null;
 }
 
+/** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
+const DASHBOARD_CACHE_TTL_MS = 30 * 1000;
+let dashboardCache: {
+  students: Profile[];
+  assignmentsByUser: Record<string, AssignmentWithVideo[]>;
+  classes: ClassRow[];
+  at: number;
+} | null = null;
+
 export default function AdminDashboardPage() {
   const [students, setStudents] = useState<Profile[]>([]);
   const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, AssignmentWithVideo[]>>({});
@@ -50,78 +60,58 @@ export default function AdminDashboardPage() {
   const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [classProgress, setClassProgress] = useState<Record<string, number>>({});
-  const [newClassTitle, setNewClassTitle] = useState("");
-  const [addClassLoading, setAddClassLoading] = useState(false);
-  const [bulkAssignClassId, setBulkAssignClassId] = useState("");
-  const [bulkAssignVideoIds, setBulkAssignVideoIds] = useState<string[]>([]);
-  const [videosForBulk, setVideosForBulk] = useState<{ id: string; title: string }[]>([]);
-  const [bulkAssignLoading, setBulkAssignLoading] = useState(false);
-  const [bulkAssignMessage, setBulkAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
+  const [enrollmentTab, setEnrollmentTab] = useState<"enrolled" | "withdrawn">("enrolled");
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  const [reEnrollUserId, setReEnrollUserId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) return;
+
+    const now = Date.now();
+    const useCache = dashboardCache && now - dashboardCache.at < DASHBOARD_CACHE_TTL_MS;
+    if (useCache && dashboardCache) {
+      setStudents(dashboardCache.students);
+      setAssignmentsByUser(dashboardCache.assignmentsByUser);
+      setClasses(dashboardCache.classes);
+      setLoading(false);
+    }
+
     const { data: { session } } = await supabase.auth.getSession();
     const authHeaders: Record<string, string> = session?.access_token
       ? { Authorization: `Bearer ${session.access_token}` }
       : {};
-    const [studentsRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
+    const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
-      supabase.from("videos").select("id, title").order("title"),
     ]);
 
-    setStudents(Array.isArray(studentsRes) ? (studentsRes as Profile[]) : []);
+    const nextStudents = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
+    let nextByUser: Record<string, AssignmentWithVideo[]> = {};
     if (!assignmentsRes.error) {
       const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
-      const byUser: Record<string, AssignmentWithVideo[]> = {};
       list.forEach((a) => {
-        if (!byUser[a.user_id]) byUser[a.user_id] = [];
-        byUser[a.user_id].push(a);
+        if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
+        nextByUser[a.user_id].push(a);
       });
-      setAssignmentsByUser(byUser);
     }
-    if (!classesRes.error) setClasses((classesRes.data as ClassRow[]) ?? []);
-    if (!videosRes.error) setVideosForBulk((videosRes.data as { id: string; title: string }[]) ?? []);
+    const nextClasses = (classesRes.error ? [] : (classesRes.data as ClassRow[]) ?? []);
 
-    const studentsList = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
-    if (studentsList.length > 0 && !assignmentsRes.error && !classesRes.error) {
-      const byUser = assignmentsRes.error ? {} : (() => {
-        const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
-        const r: Record<string, AssignmentWithVideo[]> = {};
-        list.forEach((a) => {
-          if (!r[a.user_id]) r[a.user_id] = [];
-          r[a.user_id].push(a);
-        });
-        return r;
-      })();
-      const classList = (classesRes.data as ClassRow[]) ?? [];
-      const progress: Record<string, number> = {};
-      classList.forEach((c) => {
-        const studentIds = studentsList.filter((s) => s.class_id === c.id).map((s) => s.id);
-        if (studentIds.length === 0) {
-          progress[c.id] = 0;
-          return;
-        }
-        let total = 0;
-        let count = 0;
-        studentIds.forEach((uid) => {
-          (byUser[uid] ?? []).forEach((a) => {
-            total += a.progress_percent;
-            count += 1;
-          });
-        });
-        progress[c.id] = count === 0 ? 0 : Math.round((total / count) * 10) / 10;
-      });
-      setClassProgress(progress);
-    }
-
+    setStudents(nextStudents);
+    setAssignmentsByUser(nextByUser);
+    setClasses(nextClasses);
     setLoading(false);
+
+    dashboardCache = {
+      students: nextStudents,
+      assignmentsByUser: nextByUser,
+      classes: nextClasses,
+      at: Date.now(),
+    };
   }
 
   useEffect(() => {
@@ -164,6 +154,7 @@ export default function AdminDashboardPage() {
         is_report_enabled: false,
         parent_phone: null,
         class_id: null,
+        enrollment_status: "enrolled",
       };
       setStudents((prev) => [...prev, newProfile].sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? "")));
       await load();
@@ -244,8 +235,60 @@ export default function AdminDashboardPage() {
     }
   }
 
+  /** 재원생 → 퇴원 처리 (상태만 변경, 계정 유지) */
+  async function handleWithdraw(userId: string, fullName: string) {
+    if (!confirm(`"${fullName}" 학생을 퇴원 처리하시겠습니까?\n퇴원생 목록으로 이동하며, 계정과 진도 기록은 유지됩니다.`)) return;
+    setDeleteUserId(userId);
+    setDeleteLoading(true);
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const res = await fetch("/api/admin/students", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({ user_id: userId, enrollment_status: "withdrawn" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "퇴원 처리 실패");
+      load();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "퇴원 처리에 실패했습니다.");
+    } finally {
+      setDeleteUserId(null);
+      setDeleteLoading(false);
+    }
+  }
+
+  /** 퇴원생 → 재원 복귀 */
+  async function handleReEnroll(userId: string) {
+    setReEnrollUserId(userId);
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const res = await fetch("/api/admin/students", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({ user_id: userId, enrollment_status: "enrolled" }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "재원 복귀 실패");
+      }
+      load();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "재원 복귀에 실패했습니다.");
+    } finally {
+      setReEnrollUserId(null);
+    }
+  }
+
+  /** 퇴원생 완전 삭제 (계정·진도 기록 삭제) */
   async function handleDeleteStudent(userId: string, fullName: string) {
-    if (!confirm(`"${fullName}" 학생을 삭제(퇴원 처리)하시겠습니까?\n삭제 시 해당 학생의 진도 기록도 함께 삭제되며, 복구할 수 없습니다.`)) return;
+    if (!confirm(`"${fullName}" 학생을 완전 삭제하시겠습니까?\n계정과 진도 기록이 모두 삭제되며, 복구할 수 없습니다.`)) return;
     setDeleteUserId(userId);
     setDeleteLoading(true);
     try {
@@ -290,26 +333,6 @@ export default function AdminDashboardPage() {
     }
   }
 
-  async function handleAddClass(e: React.FormEvent) {
-    e.preventDefault();
-    if (!supabase || !newClassTitle.trim()) return;
-    setAddClassLoading(true);
-    try {
-      await supabase.from("classes").insert({ title: newClassTitle.trim() });
-      setNewClassTitle("");
-      load();
-    } finally {
-      setAddClassLoading(false);
-    }
-  }
-
-  async function handleDeleteClass(classId: string) {
-    if (!supabase || !confirm("이 반을 삭제할까요? 소속 학생의 반 정보만 해제됩니다.")) return;
-    await supabase.from("profiles").update({ class_id: null }).eq("class_id", classId);
-    await supabase.from("classes").delete().eq("id", classId);
-    load();
-  }
-
   async function handleStudentClassChange(studentId: string, classId: string | null) {
     if (!supabase) return;
     setUpdatingClassId(studentId);
@@ -321,58 +344,15 @@ export default function AdminDashboardPage() {
     }
   }
 
-  async function handleBulkAssignToClass(e: React.FormEvent) {
-    e.preventDefault();
-    if (!supabase || !bulkAssignClassId || bulkAssignVideoIds.length === 0) {
-      setBulkAssignMessage({ type: "error", text: "반과 영상을 선택해 주세요." });
-      return;
-    }
-    setBulkAssignLoading(true);
-    setBulkAssignMessage(null);
-    try {
-      const studentIds = students.filter((s) => s.class_id === bulkAssignClassId).map((s) => s.id);
-      if (studentIds.length === 0) {
-        setBulkAssignMessage({ type: "error", text: "선택한 반에 소속 학생이 없습니다." });
-        setBulkAssignLoading(false);
-        return;
-      }
-      let inserted = 0;
-      for (const videoId of bulkAssignVideoIds) {
-        for (const userId of studentIds) {
-          const { error } = await supabase.from("assignments").insert({
-            user_id: userId,
-            video_id: videoId,
-            is_completed: false,
-            progress_percent: 0,
-            last_position: 0,
-            is_visible: true,
-            is_weekly_assignment: false,
-          });
-          if (!error) inserted += 1;
-        }
-      }
-      const className = classes.find((c) => c.id === bulkAssignClassId)?.title ?? "반";
-      setBulkAssignMessage({ type: "success", text: `${className}에 ${inserted}건 배정되었습니다. (이미 있던 건 제외)` });
-      setBulkAssignVideoIds([]);
-      load();
-    } catch (err) {
-      setBulkAssignMessage({ type: "error", text: err instanceof Error ? err.message : "배정 실패" });
-    } finally {
-      setBulkAssignLoading(false);
-    }
-  }
-
-  function toggleBulkVideo(videoId: string) {
-    setBulkAssignVideoIds((prev) =>
-      prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [...prev, videoId]
-    );
-  }
-
   function formatLastWatched(at: string | null) {
     if (!at) return "-";
     const d = new Date(at);
     return d.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
   }
+
+  const studentsFiltered = students.filter(
+    (s) => (s.enrollment_status ?? "enrolled") === enrollmentTab
+  );
 
   if (loading) {
     return (
@@ -387,138 +367,6 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
         학생 목록 · 영상 할당 · 모니터링
       </h1>
-
-      {/* 반별 평균 진도율 요약 */}
-      {classes.length > 0 && (
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
-            반별 평균 진도율
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {classes.map((c) => (
-              <div
-                key={c.id}
-                className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50"
-              >
-                <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {c.title}
-                </p>
-                <p className="mt-1 text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {classProgress[c.id] ?? 0}%
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {students.filter((s) => s.class_id === c.id).length}명
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* 반 관리 */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
-          반(Class) 관리
-        </h2>
-        <form onSubmit={handleAddClass} className="mb-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-[160px]">
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-              반 이름
-            </label>
-            <input
-              type="text"
-              value={newClassTitle}
-              onChange={(e) => setNewClassTitle(e.target.value)}
-              placeholder="예: 중1-A"
-              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={addClassLoading || !newClassTitle.trim()}
-            className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {addClassLoading ? "추가 중..." : "반 추가"}
-          </button>
-        </form>
-        {classes.length > 0 && (
-          <ul className="flex flex-wrap gap-2">
-            {classes.map((c) => (
-              <li
-                key={c.id}
-                className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-zinc-800"
-              >
-                <span className="font-medium text-slate-800 dark:text-white">{c.title}</span>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteClass(c.id)}
-                  className="text-red-600 hover:underline dark:text-red-400"
-                >
-                  삭제
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* 반에 영상 일괄 배정 */}
-      {classes.length > 0 && videosForBulk.length > 0 && (
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
-            반에 영상 일괄 배정
-          </h2>
-          <form onSubmit={handleBulkAssignToClass} className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                반 선택
-              </label>
-              <select
-                value={bulkAssignClassId}
-                onChange={(e) => setBulkAssignClassId(e.target.value)}
-                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-              >
-                <option value="">선택</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                영상 선택 (복수 선택)
-              </label>
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
-                {videosForBulk.map((v) => (
-                  <label key={v.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-800">
-                    <input
-                      type="checkbox"
-                      checked={bulkAssignVideoIds.includes(v.id)}
-                      onChange={() => toggleBulkVideo(v.id)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="truncate text-sm text-slate-800 dark:text-white">{v.title}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-            {bulkAssignMessage && (
-              <p className={bulkAssignMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}>
-                {bulkAssignMessage.text}
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={bulkAssignLoading || !bulkAssignClassId || bulkAssignVideoIds.length === 0}
-              className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {bulkAssignLoading ? "배정 중..." : "선택 영상 선택 반에 배정"}
-            </button>
-          </form>
-        </section>
-      )}
 
       {/* 학생 등록 */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -568,16 +416,44 @@ export default function AdminDashboardPage() {
 
       {/* 학생 목록 + 영상 할당 + 모니터링 */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 className="border-b border-slate-200 px-6 py-4 text-lg font-semibold text-slate-800 dark:border-zinc-700 dark:text-white">
-          학생 목록
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 dark:border-zinc-700">
+          <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
+            학생 목록
+          </h2>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setEnrollmentTab("enrolled")}
+              className={`rounded-full px-4 py-2 text-sm font-medium ${
+                enrollmentTab === "enrolled"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              재원생
+            </button>
+            <button
+              type="button"
+              onClick={() => setEnrollmentTab("withdrawn")}
+              className={`rounded-full px-4 py-2 text-sm font-medium ${
+                enrollmentTab === "withdrawn"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              퇴원생
+            </button>
+          </div>
+        </div>
         <div className="divide-y divide-slate-100 dark:divide-zinc-700">
-          {students.length === 0 ? (
+          {studentsFiltered.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
-              등록된 학생이 없습니다. 위에서 학생을 등록해 주세요.
+              {enrollmentTab === "enrolled"
+                ? "재원생이 없습니다. 위에서 학생을 등록해 주세요."
+                : "퇴원생이 없습니다."}
             </div>
           ) : (
-            students.map((s) => (
+            studentsFiltered.map((s) => (
               <div key={s.id} className="px-6 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -608,14 +484,35 @@ export default function AdminDashboardPage() {
                     >
                       {assignUserId === s.id ? "취소" : "영상 할당"}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
-                      disabled={deleteLoading}
-                      className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
-                    >
-                      {deleteUserId === s.id ? "삭제 중..." : "삭제(퇴원)"}
-                    </button>
+                    {enrollmentTab === "enrolled" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleWithdraw(s.id, s.full_name || s.email || "이 학생")}
+                        disabled={deleteLoading}
+                        className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-200 disabled:opacity-50 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
+                      >
+                        {deleteUserId === s.id ? "처리 중..." : "퇴원 처리"}
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleReEnroll(s.id)}
+                          disabled={reEnrollUserId !== null}
+                          className="rounded-lg bg-green-100 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/40 dark:text-green-300 dark:hover:bg-green-900/60"
+                        >
+                          {reEnrollUserId === s.id ? "처리 중..." : "재원 복귀"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
+                          disabled={deleteLoading}
+                          className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                        >
+                          {deleteUserId === s.id ? "삭제 중..." : "완전 삭제"}
+                        </button>
+                      </>
+                    )}
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-slate-600 dark:text-slate-400">리포트 공유</span>
                       <button
@@ -685,44 +582,60 @@ export default function AdminDashboardPage() {
                   </form>
                 )}
 
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full min-w-[400px] text-sm">
-                    <thead>
-                      <tr className="text-left text-slate-500 dark:text-slate-400">
-                        <th className="pb-2 pr-4">영상</th>
-                        <th className="pb-2 pr-4">진도율</th>
-                        <th className="pb-2">마지막 시청</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(assignmentsByUser[s.id] ?? []).length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="py-3 text-slate-500 dark:text-slate-400">
-                            할당된 영상 없음
-                          </td>
-                        </tr>
-                      ) : (
-                        (assignmentsByUser[s.id] ?? []).map((a) => {
-                          const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                          return (
-                          <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
-                            <td className="py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
-                              {video?.title ?? "-"}
-                            </td>
-                            <td className="py-2 pr-4">
-                              <span className={a.is_completed ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
-                                {a.progress_percent.toFixed(1)}%
-                              </span>
-                            </td>
-                            <td className="py-2 text-slate-600 dark:text-slate-400">
-                              {formatLastWatched(a.last_watched_at)}
-                            </td>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedStudentId(expandedStudentId === s.id ? null : s.id)}
+                    className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                  >
+                    {expandedStudentId === s.id ? "배정된 영상 접기" : "배정된 영상 보기"}
+                    {(assignmentsByUser[s.id] ?? []).length > 0 && (
+                      <span className="ml-1.5 text-slate-500">
+                        ({(assignmentsByUser[s.id] ?? []).length}개)
+                      </span>
+                    )}
+                  </button>
+                  {expandedStudentId === s.id && (
+                    <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-700">
+                      <table className="w-full min-w-[400px] text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 text-left text-slate-500 dark:bg-zinc-800 dark:text-slate-400">
+                            <th className="px-4 py-2 pr-4">영상</th>
+                            <th className="px-4 py-2 pr-4">진도율</th>
+                            <th className="px-4 py-2">마지막 시청</th>
                           </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {(assignmentsByUser[s.id] ?? []).length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className="px-4 py-4 text-slate-500 dark:text-slate-400">
+                                할당된 영상 없음
+                              </td>
+                            </tr>
+                          ) : (
+                            (assignmentsByUser[s.id] ?? []).map((a) => {
+                              const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                              return (
+                                <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
+                                  <td className="px-4 py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
+                                    {video?.title ?? "-"}
+                                  </td>
+                                  <td className="px-4 py-2 pr-4">
+                                    <span className={a.is_completed ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
+                                      {a.progress_percent.toFixed(1)}%
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
+                                    {formatLastWatched(a.last_watched_at)}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             ))

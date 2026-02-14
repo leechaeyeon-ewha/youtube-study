@@ -29,6 +29,9 @@ interface ClassRow {
   title: string;
 }
 
+const VIDEOS_CACHE_TTL_MS = 30 * 1000;
+let videosPageCache: { courseGroups: CourseGroup[]; at: number } | null = null;
+
 export default function AdminVideosPage() {
   const [courseGroups, setCourseGroups] = useState<CourseGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,10 +71,16 @@ export default function AdminVideosPage() {
 
   async function loadVideos() {
     if (!supabase) return;
+    const now = Date.now();
+    if (videosPageCache && now - videosPageCache.at < VIDEOS_CACHE_TTL_MS) {
+      setCourseGroups(videosPageCache.courseGroups);
+      setLoading(false);
+    }
     const { data, error } = await supabase
       .from("videos")
       .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, created_at, courses(id, title)")
       .order("created_at", { ascending: false });
+    let groups: CourseGroup[] = [];
     if (!error && data) {
       const list = data as VideoWithCourse[];
       const normalized = list.map((row) => ({
@@ -81,11 +90,9 @@ export default function AdminVideosPage() {
       const byCourse = new Map<string | null, VideoWithCourse[]>();
       for (const v of normalized) {
         const cid = v.course_id ?? null;
-        const title = v.courses?.title ?? "(강좌 없음)";
         if (!byCourse.has(cid)) byCourse.set(cid, []);
         byCourse.get(cid)!.push(v);
       }
-      const groups: CourseGroup[] = [];
       byCourse.forEach((videos, courseId) => {
         const courseTitle = videos[0]?.courses?.title ?? "기타 영상";
         groups.push({ courseId, courseTitle, videos });
@@ -96,6 +103,7 @@ export default function AdminVideosPage() {
         return a.courseTitle.localeCompare(b.courseTitle);
       });
       setCourseGroups(groups);
+      videosPageCache = { courseGroups: groups, at: Date.now() };
     }
     setLoading(false);
   }

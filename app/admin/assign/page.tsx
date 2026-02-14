@@ -20,6 +20,14 @@ interface AssignmentRow {
     | null;
 }
 
+const ASSIGN_CACHE_TTL_MS = 30 * 1000;
+let assignPageCache: {
+  students: Profile[];
+  videos: Video[];
+  assignments: AssignmentRow[];
+  at: number;
+} | null = null;
+
 export default function AdminAssignPage() {
   const [students, setStudents] = useState<Profile[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
@@ -30,9 +38,18 @@ export default function AdminAssignPage() {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  /** 학생별 진도 필터: 전체 | 완료 | 미완료 */
+  const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete">>({});
 
   async function load() {
     if (!supabase) return;
+    const now = Date.now();
+    if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
+      setStudents(assignPageCache.students);
+      setVideos(assignPageCache.videos);
+      setAssignments(assignPageCache.assignments);
+      setLoading(false);
+    }
     const [profilesRes, videosRes, assignmentsRes] = await Promise.all([
       supabase.from("profiles").select("id, role, full_name, email").eq("role", "student").order("full_name"),
       supabase.from("videos").select("id, title, video_id").order("title"),
@@ -41,11 +58,14 @@ export default function AdminAssignPage() {
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id), profiles(full_name, email)")
         .order("created_at", { ascending: false }),
     ]);
-    if (!profilesRes.error) setStudents((profilesRes.data as Profile[]) ?? []);
-    if (!videosRes.error) setVideos((videosRes.data as Video[]) ?? []);
-    if (!assignmentsRes.error)
-      setAssignments(((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+    const nextStudents = (profilesRes.error ? [] : (profilesRes.data as Profile[]) ?? []);
+    const nextVideos = (videosRes.error ? [] : (videosRes.data as Video[]) ?? []);
+    const nextAssignments = (assignmentsRes.error ? [] : ((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+    setStudents(nextStudents);
+    setVideos(nextVideos);
+    setAssignments(nextAssignments);
     setLoading(false);
+    assignPageCache = { students: nextStudents, videos: nextVideos, assignments: nextAssignments, at: Date.now() };
   }
 
   useEffect(() => {
@@ -204,61 +224,116 @@ export default function AdminAssignPage() {
                           {isExpanded ? "접기" : "배정된 영상 보기"}
                         </button>
                       </div>
-                      {isExpanded && (
-                        <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left text-sm">
-                              <thead>
-                                <tr className="border-b border-slate-200 dark:border-zinc-700">
-                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
-                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
-                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">마지막 시청</th>
-                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">완료</th>
-                                  <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">관리</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {list.map((a) => {
-                                  const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                                  return (
-                                    <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
-                                      <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
-                                        {video?.title ?? "-"}
-                                      </td>
-                                      <td className="px-4 py-2.5">
-                                        <span className={a.is_completed ? "font-medium text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
-                                          {a.progress_percent.toFixed(1)}%
-                                        </span>
-                                      </td>
-                                      <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">
-                                        {a.last_watched_at
-                                          ? new Date(a.last_watched_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })
-                                          : "-"}
-                                      </td>
-                                      <td className="px-4 py-2.5">
-                                        {a.is_completed ? (
-                                          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">완료</span>
-                                        ) : (
-                                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">미완료</span>
-                                        )}
-                                      </td>
-                                      <td className="px-4 py-2.5">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleUnassign(a.id)}
-                                          className="text-red-600 hover:underline dark:text-red-400"
-                                        >
-                                          배정 해제
-                                        </button>
+                      {isExpanded && (() => {
+                        const filter = progressFilterByStudent[userId] ?? "all";
+                        const filteredList =
+                          filter === "completed"
+                            ? list.filter((a) => a.is_completed)
+                            : filter === "incomplete"
+                              ? list.filter((a) => !a.is_completed)
+                              : list;
+                        const completedCount = list.filter((a) => a.is_completed).length;
+                        const incompleteCount = list.length - completedCount;
+                        return (
+                          <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
+                            <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-zinc-700">
+                              <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
+                              <button
+                                type="button"
+                                onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "all" }))}
+                                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                  filter === "all"
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                }`}
+                              >
+                                전체 ({list.length})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "completed" }))}
+                                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                  filter === "completed"
+                                    ? "bg-green-600 text-white"
+                                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                }`}
+                              >
+                                완료 ({completedCount})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "incomplete" }))}
+                                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                  filter === "incomplete"
+                                    ? "bg-amber-600 text-white"
+                                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                }`}
+                              >
+                                미완료 ({incompleteCount})
+                              </button>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-sm">
+                                <thead>
+                                  <tr className="border-b border-slate-200 dark:border-zinc-700">
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">마지막 시청</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">완료</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">관리</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {filteredList.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={5} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
+                                        {filter === "all" ? "배정된 영상이 없습니다." : filter === "completed" ? "완료된 영상이 없습니다." : "미완료 영상이 없습니다."}
                                       </td>
                                     </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                                  ) : (
+                                    filteredList.map((a) => {
+                                      const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                                      return (
+                                        <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
+                                          <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
+                                            {video?.title ?? "-"}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            <span className={a.is_completed ? "font-medium text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
+                                              {a.progress_percent.toFixed(1)}%
+                                            </span>
+                                          </td>
+                                          <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">
+                                            {a.last_watched_at
+                                              ? new Date(a.last_watched_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })
+                                              : "-"}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            {a.is_completed ? (
+                                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">완료</span>
+                                            ) : (
+                                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">미완료</span>
+                                            )}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleUnassign(a.id)}
+                                              className="text-red-600 hover:underline dark:text-red-400"
+                                            >
+                                              배정 해제
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </li>
                   );
                 });

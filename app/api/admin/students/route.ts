@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, email, report_token, is_report_enabled, parent_phone, class_id")
+    .select("id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, enrollment_status")
     .eq("role", "student")
     .order("full_name");
   if (error) {
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "사용자 생성에 실패했습니다." }, { status: 500 });
   }
 
-  // 트리거가 없거나 실패해도 목록에 나오도록 upsert (role 반드시 'student')
+  // 트리거가 없거나 실패해도 목록에 나오도록 upsert (role 반드시 'student', 재원생)
   const { error: upsertError } = await supabase
     .from("profiles")
     .upsert(
@@ -94,6 +94,7 @@ export async function POST(req: Request) {
         role: "student",
         full_name: fullName,
         email,
+        enrollment_status: "enrolled",
       },
       { onConflict: "id" }
     );
@@ -110,6 +111,56 @@ export async function POST(req: Request) {
     full_name: fullName,
     email,
   });
+}
+
+/** 퇴원/재원 처리: enrollment_status만 변경 (계정 삭제 안 함) */
+export async function PATCH(req: Request) {
+  const admin = await requireAdmin(req);
+  if (!admin) {
+    return NextResponse.json({ error: "관리자만 접근할 수 있습니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "서버 설정이 없습니다. SUPABASE_SERVICE_ROLE_KEY를 설정해 주세요." },
+      { status: 500 }
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
+  const status = body.enrollment_status === "withdrawn" ? "withdrawn" : "enrolled";
+
+  if (!userId) {
+    return NextResponse.json({ error: "대상 학생을 지정해 주세요." }, { status: 400 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, role")
+    .eq("id", userId)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "해당 사용자를 찾을 수 없습니다." }, { status: 404 });
+  }
+  if (profile.role === "admin") {
+    return NextResponse.json({ error: "관리자 계정은 변경할 수 없습니다." }, { status: 400 });
+  }
+
+  const { error: updateError } = await supabase
+    .from("profiles")
+    .update({ enrollment_status: status })
+    .eq("id", userId);
+
+  if (updateError) {
+    return NextResponse.json(
+      { error: updateError.message.includes("enrollment_status") ? "enrollment_status 컬럼이 없습니다. Supabase에서 migration_enrollment_status.sql을 실행해 주세요." : updateError.message },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ success: true, enrollment_status: status });
 }
 
 export async function DELETE(req: Request) {
