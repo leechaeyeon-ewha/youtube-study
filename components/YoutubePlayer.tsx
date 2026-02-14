@@ -7,7 +7,8 @@ const SKIP_TOLERANCE_SEC = 0.5;
 const MAX_PLAYBACK_RATE = 1.4;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
-const RATE_CHECK_INTERVAL_MS = 100;
+const RATE_CHECK_INTERVAL_MS = 50;
+const RATE_CHECK_INTERVAL_MOBILE_MS = 30;
 
 declare global {
   interface Window {
@@ -161,22 +162,22 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
               }
               setReady(true);
             },
-            onStateChange: (e: { data: number }) => {
+            onStateChange: () => {
               if (!mounted || !playerRef.current) return;
-              try {
-                const p = playerRef.current;
-                const r = p.getPlaybackRate();
-                if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
-                  p.setPlaybackRate(MAX_PLAYBACK_RATE);
-                  setTimeout(() => {
-                    if (playerRef.current && playerRef.current.getPlaybackRate() > MAX_PLAYBACK_RATE) {
-                      playerRef.current.setPlaybackRate(MAX_PLAYBACK_RATE);
-                    }
-                  }, 100);
+              const forceRateCap = () => {
+                try {
+                  const p = playerRef.current;
+                  if (!p) return;
+                  const r = p.getPlaybackRate();
+                  const capped = typeof r === "number" && Number.isFinite(r) ? Math.min(r, MAX_PLAYBACK_RATE) : MAX_PLAYBACK_RATE;
+                  if (r > MAX_PLAYBACK_RATE) p.setPlaybackRate(MAX_PLAYBACK_RATE);
+                  else if (r !== capped) p.setPlaybackRate(capped);
+                } catch {
+                  // ignore
                 }
-              } catch {
-                // ignore
-              }
+              };
+              forceRateCap();
+              [50, 120, 250, 400].forEach((ms) => setTimeout(forceRateCap, ms));
             },
           },
         }) as unknown as YTPlayer;
@@ -200,27 +201,39 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   useEffect(() => {
     if (!ready) return;
 
+    const isTouch =
+      typeof navigator !== "undefined" &&
+      (navigator.maxTouchPoints > 0 || (typeof window !== "undefined" && "ontouchstart" in window));
+    const intervalMs = isTouch ? RATE_CHECK_INTERVAL_MOBILE_MS : RATE_CHECK_INTERVAL_MS;
+
     const clampRate = () => {
       try {
         const p = playerRef.current;
         if (!p) return;
         const rate = p.getPlaybackRate();
-        if (typeof rate !== "number" || !Number.isFinite(rate) || rate > MAX_PLAYBACK_RATE) {
+        const capped =
+          typeof rate === "number" && Number.isFinite(rate)
+            ? Math.min(Math.max(rate, 0.25), MAX_PLAYBACK_RATE)
+            : 1;
+        if (rate > MAX_PLAYBACK_RATE) {
           p.setPlaybackRate(MAX_PLAYBACK_RATE);
           const now = Date.now();
           if (now - lastRateAlertRef.current > 3000) {
             lastRateAlertRef.current = now;
             alert("1.4배속까지만 사용할 수 있습니다. 1.4배속으로 조정됩니다.");
           }
+        } else {
+          if (rate !== capped) p.setPlaybackRate(capped);
+          else if (isTouch) p.setPlaybackRate(capped);
         }
       } catch (_: unknown) {
         // ignore
       }
     };
 
-    const interval = setInterval(clampRate, RATE_CHECK_INTERVAL_MS);
+    const interval = setInterval(clampRate, intervalMs);
 
-    const RAF_CLAMP_MS = 80;
+    const RAF_CLAMP_MS = isTouch ? 33 : 50;
     const runRaf = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         const now = Date.now();
