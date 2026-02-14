@@ -251,7 +251,7 @@ function LoginPageContent() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="관리자가 알려준 비밀번호"
+                placeholder="비밀번호를 입력하시오"
                 required
                 autoComplete="current-password"
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"

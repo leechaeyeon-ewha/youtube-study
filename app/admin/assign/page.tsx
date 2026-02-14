@@ -40,6 +40,7 @@ export default function AdminAssignPage() {
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   /** 학생별 진도 필터: 전체 | 완료 | 미완료 */
   const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete">>({});
+  const [videoSearchTitle, setVideoSearchTitle] = useState("");
 
   async function load() {
     if (!supabase) return;
@@ -131,13 +132,23 @@ export default function AdminAssignPage() {
           <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
             영상 선택
           </label>
+          <input
+            type="text"
+            value={videoSearchTitle}
+            onChange={(e) => setVideoSearchTitle(e.target.value)}
+            placeholder="제목으로 검색..."
+            className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+          />
           <select
             value={selectedVideo}
             onChange={(e) => setSelectedVideo(e.target.value)}
             className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
           >
             <option value="">영상 선택</option>
-            {videos.map((v) => (
+            {(videoSearchTitle.trim()
+              ? videos.filter((v) => (v.title || "").toLowerCase().includes(videoSearchTitle.trim().toLowerCase()))
+              : videos
+            ).map((v) => (
               <option key={v.id} value={v.id}>
                 {v.title}
               </option>

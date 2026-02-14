@@ -79,14 +79,17 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const [ready, setReady] = useState(false);
   const [embedError, setEmbedError] = useState(false);
   const maxWatchedRef = useRef(initialPosition);
+  const lastCurrentRef = useRef(initialPosition);
   const durationRef = useRef(0);
   const lastSavedPercentRef = useRef(0);
   const lastSaveTimeRef = useRef(0);
   const [progressPercent, setProgressPercent] = useState(0);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const skipAlertCooldownRef = useRef(0);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
+    lastCurrentRef.current = initialPosition;
   }, [initialPosition]);
 
   useEffect(() => {
@@ -236,9 +239,19 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         if (!Number.isFinite(current) || current < 0) return;
         if (!Number.isFinite(duration) || duration <= 0) return;
 
-        if (current > maxWatchedRef.current + SKIP_TOLERANCE_SEC) {
+        const prevCurrent = lastCurrentRef.current;
+        lastCurrentRef.current = current;
+
+        const jumpForward = current - prevCurrent > 1.5;
+        const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
+        if (jumpForward && aheadOfMax) {
           p.seekTo(maxWatchedRef.current, true);
-          alert("영상을 건너뛸 수 없습니다. 시청한 위치로 되돌립니다.");
+          lastCurrentRef.current = maxWatchedRef.current;
+          const now = Date.now();
+          if (now - skipAlertCooldownRef.current > 2000) {
+            skipAlertCooldownRef.current = now;
+            alert("영상을 건너뛸 수 없습니다. 시청한 위치로 되돌립니다.");
+          }
           return;
         }
 

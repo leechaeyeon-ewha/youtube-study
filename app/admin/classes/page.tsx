@@ -65,6 +65,7 @@ export default function AdminClassesPage() {
 
   const [videoSourceTab, setVideoSourceTab] = useState<"playlist" | "single">("playlist");
   const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
+  const [videoSearchTitle, setVideoSearchTitle] = useState("");
 
   async function load() {
     if (!supabase) return;
@@ -167,6 +168,16 @@ export default function AdminClassesPage() {
   const playlistGroups = courseGroups.filter((g) => g.courseId !== null);
   const allVideos = courseGroups.flatMap((g) => g.videos);
   const standaloneVideos = allVideos.filter((v) => !v.course_id);
+  const searchLower = videoSearchTitle.trim().toLowerCase();
+  const filteredPlaylistGroups = playlistGroups
+    .map((g) => ({
+      ...g,
+      videos: searchLower ? g.videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower)) : g.videos,
+    }))
+    .filter((g) => g.videos.length > 0);
+  const filteredStandaloneVideos = searchLower
+    ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+    : standaloneVideos;
 
   async function handleAddClass(e: React.FormEvent) {
     e.preventDefault();
@@ -343,14 +354,27 @@ export default function AdminClassesPage() {
                   등록된 영상
                 </button>
               </div>
+              {(playlistGroups.length > 0 || standaloneVideos.length > 0) && (
+                <input
+                  type="text"
+                  value={videoSearchTitle}
+                  onChange={(e) => setVideoSearchTitle(e.target.value)}
+                  placeholder="제목으로 검색..."
+                  className="mb-3 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                />
+              )}
 
               <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-200 dark:border-zinc-700">
                 {videoSourceTab === "playlist" ? (
-                  playlistGroups.length === 0 ? (
-                    <p className="p-4 text-center text-sm text-slate-500 dark:text-slate-400">등록된 재생목록이 없습니다.</p>
+                  filteredPlaylistGroups.length === 0 ? (
+                    <p className="p-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                      {videoSearchTitle.trim() && (playlistGroups.length > 0 || standaloneVideos.length > 0)
+                        ? "제목에 맞는 영상이 없습니다."
+                        : "등록된 재생목록이 없습니다."}
+                    </p>
                   ) : (
                     <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-                      {playlistGroups.map((group) => {
+                      {filteredPlaylistGroups.map((group) => {
                         const ids = group.videos.map((v) => v.id);
                         const allInGroupSelected = ids.length > 0 && ids.every((id) => bulkAssignVideoIds.includes(id));
                         const isExpanded = expandedCourseId === group.courseId;
@@ -405,11 +429,13 @@ export default function AdminClassesPage() {
                     </ul>
                   )
                 ) : (
-                  standaloneVideos.length === 0 ? (
-                    <p className="p-4 text-center text-sm text-slate-500 dark:text-slate-400">등록된 영상이 없습니다.</p>
+                  filteredStandaloneVideos.length === 0 ? (
+                    <p className="p-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                      {videoSearchTitle.trim() && standaloneVideos.length > 0 ? "제목에 맞는 영상이 없습니다." : "등록된 영상이 없습니다."}
+                    </p>
                   ) : (
                     <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-                      {standaloneVideos.map((v) => (
+                      {filteredStandaloneVideos.map((v) => (
                         <li key={v.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-zinc-800/50">
                           <input
                             type="checkbox"

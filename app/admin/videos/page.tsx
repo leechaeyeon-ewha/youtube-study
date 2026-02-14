@@ -68,6 +68,7 @@ export default function AdminVideosPage() {
 
   const [bulkMessage, setBulkMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [videoSearchTitle, setVideoSearchTitle] = useState("");
 
   async function loadVideos() {
     if (!supabase) return;
@@ -131,10 +132,18 @@ export default function AdminVideosPage() {
   const allVideos = courseGroups.flatMap((g) => g.videos);
   const playlistGroups = courseGroups.filter((g) => g.courseId !== null);
   const standaloneVideos = allVideos.filter((v) => !v.course_id);
+  const searchLower = videoSearchTitle.trim().toLowerCase();
+  const filteredPlaylistGroups = playlistGroups
+    .map((g) => ({
+      ...g,
+      videos: searchLower ? g.videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower)) : g.videos,
+    }))
+    .filter((g) => g.videos.length > 0);
+  const filteredStandaloneVideos = searchLower
+    ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+    : standaloneVideos;
   const displayedVideos =
-    activeTab === "playlist"
-      ? playlistGroups.flatMap((g) => g.videos)
-      : standaloneVideos;
+    activeTab === "playlist" ? filteredPlaylistGroups.flatMap((g) => g.videos) : filteredStandaloneVideos;
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -449,6 +458,17 @@ export default function AdminVideosPage() {
               등록된 영상
             </button>
           </div>
+          {(playlistGroups.length > 0 || standaloneVideos.length > 0) && (
+            <div className="mb-3">
+              <input
+                type="text"
+                value={videoSearchTitle}
+                onChange={(e) => setVideoSearchTitle(e.target.value)}
+                placeholder="제목으로 검색..."
+                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+            </div>
+          )}
           {displayedVideos.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
@@ -489,11 +509,16 @@ export default function AdminVideosPage() {
           <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" /></div>
         ) : displayedVideos.length === 0 ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-slate-400">
-            {activeTab === "playlist" ? "등록된 재생목록이 없습니다." : "등록된 영상이 없습니다."}
+            {videoSearchTitle.trim() &&
+            (activeTab === "playlist" ? playlistGroups : standaloneVideos).length > 0
+              ? "제목에 맞는 영상이 없습니다."
+              : activeTab === "playlist"
+                ? "등록된 재생목록이 없습니다."
+                : "등록된 영상이 없습니다."}
           </div>
         ) : activeTab === "playlist" ? (
           <div className="space-y-4">
-            {playlistGroups.map((group) => {
+            {filteredPlaylistGroups.map((group) => {
               const ids = group.videos.map((v) => v.id);
               const allInGroupSelected =
                 ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
@@ -581,7 +606,7 @@ export default function AdminVideosPage() {
           </div>
         ) : (
           <ul className="space-y-3">
-            {standaloneVideos.map((v) => (
+            {filteredStandaloneVideos.map((v) => (
               <li
                 key={v.id}
                 className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"

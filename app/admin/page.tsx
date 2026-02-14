@@ -94,6 +94,7 @@ export default function AdminDashboardPage() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [assignFromLibraryVideoId, setAssignFromLibraryVideoId] = useState<string | null>(null);
   const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
+  const [librarySearchTitle, setLibrarySearchTitle] = useState("");
 
   async function load() {
     if (!supabase) return;
@@ -844,25 +845,44 @@ export default function AdminDashboardPage() {
                         ) : libraryGroups.length === 0 ? (
                           <p className="p-4 text-sm text-slate-500 dark:text-slate-400">등록된 재생목록/동영상이 없습니다.</p>
                         ) : (
-                          <ul className="divide-y divide-slate-200 dark:divide-zinc-600">
-                            {libraryGroups.map((grp) => {
-                              const courseKey = grp.courseId ?? "single";
-                              const isExpanded = expandedLibraryCourseKey === courseKey;
-                              return (
-                                <li key={courseKey}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
-                                    className="flex w-full items-center justify-between bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                  >
-                                    <span>{grp.courseTitle}</span>
-                                    <span className="text-slate-400 dark:text-slate-500">
-                                      {grp.videos.length}개 · {isExpanded ? "접기" : "펼치기"}
-                                    </span>
-                                  </button>
-                                  {isExpanded && (
-                                    <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-                                      {grp.videos.map((v) => (
+                          <>
+                            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white p-2 dark:border-zinc-600 dark:bg-zinc-800">
+                              <input
+                                type="text"
+                                value={librarySearchTitle}
+                                onChange={(e) => setLibrarySearchTitle(e.target.value)}
+                                placeholder="제목으로 검색..."
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                              />
+                            </div>
+                            <ul className="divide-y divide-slate-200 dark:divide-zinc-600">
+                              {libraryGroups
+                                .map((grp) => {
+                                  const searchLower = librarySearchTitle.trim().toLowerCase();
+                                  const filteredVideos = searchLower
+                                    ? grp.videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+                                    : grp.videos;
+                                  return { ...grp, filteredVideos };
+                                })
+                                .filter((grp) => grp.filteredVideos.length > 0)
+                                .map((grp) => {
+                                  const courseKey = grp.courseId ?? "single";
+                                  const isExpanded = expandedLibraryCourseKey === courseKey;
+                                  return (
+                                    <li key={courseKey}>
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
+                                        className="flex w-full items-center justify-between bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                      >
+                                        <span>{grp.courseTitle}</span>
+                                        <span className="text-slate-400 dark:text-slate-500">
+                                          {grp.filteredVideos.length}개 · {isExpanded ? "접기" : "펼치기"}
+                                        </span>
+                                      </button>
+                                      {isExpanded && (
+                                        <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+                                          {grp.filteredVideos.map((v) => (
                                         <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-2">
                                           <span className="min-w-0 truncate text-sm text-slate-800 dark:text-slate-200" title={v.title}>
                                             {v.title}
@@ -894,7 +914,15 @@ export default function AdminDashboardPage() {
                                 </li>
                               );
                             })}
-                          </ul>
+                            </ul>
+                            {librarySearchTitle.trim() &&
+                              libraryGroups.every((grp) => {
+                                const searchLower = librarySearchTitle.trim().toLowerCase();
+                                return !grp.videos.some((v) => (v.title || "").toLowerCase().includes(searchLower));
+                              }) && (
+                                <p className="p-4 text-sm text-slate-500 dark:text-slate-400">제목에 맞는 영상이 없습니다.</p>
+                              )}
+                          </>
                         )}
                       </div>
                     )}
