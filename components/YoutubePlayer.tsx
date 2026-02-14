@@ -8,7 +8,7 @@ const MAX_PLAYBACK_RATE = 1.4;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 const RATE_CHECK_INTERVAL_MS = 50;
-const RATE_CHECK_INTERVAL_MOBILE_MS = 30;
+const RATE_CHECK_INTERVAL_MOBILE_MS = 16;
 
 declare global {
   interface Window {
@@ -147,6 +147,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
+            fs: 0,
             start: Math.floor(initialPosition),
           },
           events: {
@@ -177,7 +178,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
                 }
               };
               forceRateCap();
-              [50, 120, 250, 400].forEach((ms) => setTimeout(forceRateCap, ms));
+              [20, 50, 100, 150, 250, 400, 600, 900].forEach((ms) => setTimeout(forceRateCap, ms));
             },
           },
         }) as unknown as YTPlayer;
@@ -217,6 +218,18 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             : 1;
         if (rate > MAX_PLAYBACK_RATE) {
           p.setPlaybackRate(MAX_PLAYBACK_RATE);
+          if (isTouch) {
+            [0, 20, 50, 100, 150].forEach((ms, i) => {
+              setTimeout(() => {
+                try {
+                  const px = playerRef.current;
+                  if (px && px.getPlaybackRate() > MAX_PLAYBACK_RATE) px.setPlaybackRate(MAX_PLAYBACK_RATE);
+                } catch {
+                  // ignore
+                }
+              }, ms);
+            });
+          }
           const now = Date.now();
           if (now - lastRateAlertRef.current > 3000) {
             lastRateAlertRef.current = now;
@@ -233,13 +246,17 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
 
     const interval = setInterval(clampRate, intervalMs);
 
-    const RAF_CLAMP_MS = isTouch ? 33 : 50;
+    const RAF_CLAMP_MS = isTouch ? 0 : 50;
     const runRaf = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        const now = Date.now();
-        if (now - lastRafClampRef.current >= RAF_CLAMP_MS) {
-          lastRafClampRef.current = now;
+        if (isTouch) {
           clampRate();
+        } else {
+          const now = Date.now();
+          if (now - lastRafClampRef.current >= RAF_CLAMP_MS) {
+            lastRafClampRef.current = now;
+            clampRate();
+          }
         }
       }
       rafIdRef.current = requestAnimationFrame(runRaf);
