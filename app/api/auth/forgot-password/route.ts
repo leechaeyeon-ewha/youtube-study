@@ -58,8 +58,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const actionLink = linkData?.action_link;
-  if (!actionLink) {
+  const properties = linkData && "properties" in linkData ? linkData.properties : undefined;
+  const actionLink = properties && "action_link" in properties ? properties.action_link : undefined;
+  if (!actionLink || typeof actionLink !== "string") {
     return NextResponse.json(
       { error: "재설정 링크를 가져올 수 없습니다." },
       { status: 500 }
