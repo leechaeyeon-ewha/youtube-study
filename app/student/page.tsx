@@ -110,6 +110,7 @@ function usePwaInstall() {
 export default function StudentPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState<string | null>(null);
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +128,10 @@ export default function StudentPage() {
   const [passwordChangeMessage, setPasswordChangeMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
 
+  const [emailInput, setEmailInput] = useState("");
+  const [emailMessage, setEmailMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+
   useEffect(() => {
     if (!supabase) {
       setError("Supabase가 설정되지 않았습니다.");
@@ -143,7 +148,7 @@ export default function StudentPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("full_name, role")
+        .select("full_name, role, email")
         .eq("id", user.id)
         .single();
 
@@ -153,6 +158,9 @@ export default function StudentPage() {
       }
 
       setFullName(profile?.full_name ?? "학생");
+      const email = profile?.email ?? null;
+      setProfileEmail(email);
+      setEmailInput(email && !email.endsWith("@academy.local") ? email : "");
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
@@ -271,6 +279,76 @@ export default function StudentPage() {
             >
               리포트(학부모 보기)
             </button>
+          </div>
+
+          {/* 내 이메일 등록/수정 (비밀번호 재설정·로그인에 사용) */}
+          <div className="mt-4">
+            <p className="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">내 이메일</p>
+            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+              {profileEmail && !profileEmail.endsWith("@academy.local")
+                ? `등록됨: ${profileEmail}`
+                : "이메일을 등록하면 비밀번호 재설정·이메일 로그인을 사용할 수 있습니다."}
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setEmailMessage(null);
+                const email = emailInput.trim();
+                if (!email || !email.includes("@")) {
+                  setEmailMessage({ type: "error", text: "올바른 이메일을 입력해 주세요." });
+                  return;
+                }
+                if (!supabase) return;
+                setEmailLoading(true);
+                try {
+                  const { data: { session } } = await supabase.auth.getSession();
+                  const res = await fetch("/api/student/email", {
+                    method: "PATCH",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+                    },
+                    body: JSON.stringify({ email }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || "이메일 등록에 실패했습니다.");
+                  setProfileEmail(email);
+                  setEmailMessage({ type: "success", text: "이메일이 등록되었습니다. 비밀번호 재설정 시 이 이메일을 사용할 수 있습니다." });
+                } catch (err: unknown) {
+                  setEmailMessage({
+                    type: "error",
+                    text: err instanceof Error ? err.message : "이메일 등록에 실패했습니다.",
+                  });
+                } finally {
+                  setEmailLoading(false);
+                }
+              }}
+              className="flex flex-wrap items-end gap-2"
+            >
+              <input
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="example@email.com"
+                className="min-w-[200px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+              <button
+                type="submit"
+                disabled={emailLoading}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {emailLoading ? "저장 중…" : "저장"}
+              </button>
+            </form>
+            {emailMessage && (
+              <p
+                className={`mt-2 text-sm ${
+                  emailMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+                }`}
+              >
+                {emailMessage.text}
+              </p>
+            )}
           </div>
 
           {/* 비밀번호 변경 (로그인 후 새 비번으로 변경 가능) */}

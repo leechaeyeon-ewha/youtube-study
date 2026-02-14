@@ -5,6 +5,7 @@ import Link from "next/link";
 
 export default function ForgotPasswordPage() {
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
@@ -15,20 +16,26 @@ export default function ForgotPasswordPage() {
       setMessage({ type: "error", text: "이름을 입력해 주세요." });
       return;
     }
+    if (!email.trim()) {
+      setMessage({ type: "error", text: "이메일을 입력해 주세요." });
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name: fullName.trim() }),
+        body: JSON.stringify({ full_name: fullName.trim(), email: email.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "재설정 링크를 받지 못했습니다.");
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
+      if (!res.ok) throw new Error(data.error || "재설정 요청에 실패했습니다.");
+      if (data.success && data.message) {
+        setMessage({ type: "success", text: data.message });
+        setFullName("");
+        setEmail("");
         return;
       }
-      throw new Error("재설정 링크를 받지 못했습니다.");
+      throw new Error(data.error || "재설정 요청에 실패했습니다.");
     } catch (err: unknown) {
       setMessage({
         type: "error",
@@ -56,7 +63,7 @@ export default function ForgotPasswordPage() {
           비밀번호 재설정
         </h1>
         <p className="mb-6 text-center text-sm text-slate-500 dark:text-slate-400">
-          등록된 이름을 입력하면 재설정 링크로 이동합니다. 새 비밀번호를 설정할 수 있습니다.
+          등록된 이름과 이메일을 입력하면, 해당 이메일로 재설정 링크를 보냅니다. 본인 이메일에서만 링크를 열 수 있습니다.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -71,6 +78,20 @@ export default function ForgotPasswordPage() {
               placeholder="등록된 이름을 입력하세요"
               required
               autoComplete="name"
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              이메일
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="등록된 이메일을 입력하세요"
+              required
+              autoComplete="email"
               className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
             />
           </div>
@@ -90,7 +111,7 @@ export default function ForgotPasswordPage() {
             disabled={loading}
             className="w-full rounded-lg bg-indigo-600 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {loading ? "처리 중…" : "재설정 링크로 이동"}
+            {loading ? "처리 중…" : "재설정 링크 받기"}
           </button>
         </form>
 

@@ -106,7 +106,6 @@ export async function POST(req: Request) {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-
   const email = `student_${Date.now()}_${Math.random().toString(36).slice(2, 10)}@academy.local`;
 
   const { data: userData, error: createError } = await supabase.auth.admin.createUser({

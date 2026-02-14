@@ -3,27 +3,31 @@ import { NextResponse } from "next/server";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 /**
- * 학생 비밀번호 재설정 링크 발급: 이름으로 이메일 조회 후 recovery 링크 생성.
- * Supabase 대시보드 → Authentication → URL Configuration 에서
- * Redirect URLs에 https://도메인/reset-password, http://localhost:3000/reset-password 를 추가해야 합니다.
- * 배포 시 Vercel 등에 NEXT_PUBLIC_APP_URL=https://실제도메인 을 설정하면 리다이렉트가 안정적으로 동작합니다.
+ * 학생 비밀번호 재설정: 이름+이메일이 등록 정보와 일치할 때만,
+ * 해당 이메일로 재설정 링크를 보냅니다. 링크는 클라이언트에 반환하지 않아
+ * 본인(이메일 소유자)만 비밀번호를 변경할 수 있습니다.
+ * Supabase Redirect URLs에 https://도메인/reset-password, http://localhost:3000/reset-password 추가 필요.
  */
 export async function POST(req: Request) {
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
     return NextResponse.json({ error: "서버 설정이 없습니다." }, { status: 500 });
   }
 
   const body = await req.json().catch(() => ({}));
   const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
+  const emailInput = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   if (!fullName) {
     return NextResponse.json({ error: "이름을 입력해 주세요." }, { status: 400 });
   }
+  if (!emailInput) {
+    return NextResponse.json({ error: "이메일을 입력해 주세요." }, { status: 400 });
+  }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
-
-  const { data: profile, error: profileError } = await supabase
+  const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from("profiles")
     .select("email")
     .eq("role", "student")
@@ -33,12 +37,19 @@ export async function POST(req: Request) {
 
   if (profileError || !profile?.email) {
     return NextResponse.json(
-      { error: "등록된 학생이 없거나 이름이 일치하지 않습니다." },
-      { status: 404 }
+      { error: "이름과 이메일이 등록된 정보와 일치하지 않습니다." },
+      { status: 400 }
     );
   }
 
-  // 재설정 후 리다이렉트할 앱 주소. 배포 시 NEXT_PUBLIC_APP_URL 설정 권장.
+  const profileEmailLower = (profile.email || "").toLowerCase();
+  if (profileEmailLower !== emailInput) {
+    return NextResponse.json(
+      { error: "이름과 이메일이 등록된 정보와 일치하지 않습니다." },
+      { status: 400 }
+    );
+  }
+
   const forwardedProto = req.headers.get("x-forwarded-proto");
   const forwardedHost = req.headers.get("x-forwarded-host");
   const origin = req.headers.get("origin");
@@ -48,7 +59,7 @@ export async function POST(req: Request) {
     try {
       originOrigin = new URL(origin).origin;
     } catch {
-      // ignore invalid origin
+      // ignore
     }
   }
   const baseUrl =
@@ -59,27 +70,20 @@ export async function POST(req: Request) {
     "http://localhost:3000";
   const redirectTo = `${baseUrl}/reset-password`;
 
-  const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
-    type: "recovery",
-    email: profile.email,
-    options: { redirectTo },
+  const supabaseAnon = createClient(supabaseUrl, anonKey);
+  const { error: resetError } = await supabaseAnon.auth.resetPasswordForEmail(profile.email, {
+    redirectTo,
   });
 
-  if (linkError) {
+  if (resetError) {
     return NextResponse.json(
-      { error: linkError.message || "재설정 링크 생성에 실패했습니다." },
+      { error: resetError.message || "재설정 메일 발송에 실패했습니다." },
       { status: 500 }
     );
   }
 
-  const properties = linkData && "properties" in linkData ? linkData.properties : undefined;
-  const actionLink = properties && "action_link" in properties ? properties.action_link : undefined;
-  if (!actionLink || typeof actionLink !== "string") {
-    return NextResponse.json(
-      { error: "재설정 링크를 가져올 수 없습니다." },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json({ redirect_url: actionLink });
+  return NextResponse.json({
+    success: true,
+    message: "등록된 이메일로 재설정 링크를 보냈습니다. 이메일을 확인해 주세요.",
+  });
 }
