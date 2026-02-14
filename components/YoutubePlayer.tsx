@@ -9,6 +9,9 @@ const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 const RATE_CHECK_INTERVAL_MS = 50;
 const RATE_CHECK_INTERVAL_MOBILE_MS = 16;
+const RATE_FALLBACK_CHECK_MS = 1000;
+const RATE_TOAST_MESSAGE = "우리 학원 시스템에서는 1.4배속까지만 허용됩니다.";
+const TOAST_DURATION_MS = 3000;
 
 declare global {
   interface Window {
@@ -87,6 +90,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const [progressPercent, setProgressPercent] = useState(0);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const skipAlertCooldownRef = useRef(0);
+  const lastKnownRateRef = useRef<number>(1);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -194,9 +200,27 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, [isClient, videoId, initialPosition]);
 
-  const lastRateAlertRef = useRef(0);
   const rafIdRef = useRef<number | null>(null);
   const lastRafClampRef = useRef(0);
+
+  const lastToastTimeRef = useRef(0);
+  const showRateToast = useCallback(() => {
+    const now = Date.now();
+    if (now - lastToastTimeRef.current < TOAST_DURATION_MS) return;
+    lastToastTimeRef.current = now;
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(RATE_TOAST_MESSAGE);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, TOAST_DURATION_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
@@ -215,10 +239,12 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           typeof rate === "number" && Number.isFinite(rate)
             ? Math.min(Math.max(rate, 0.25), MAX_PLAYBACK_RATE)
             : 1;
+
         if (rate > MAX_PLAYBACK_RATE) {
+          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
           p.setPlaybackRate(MAX_PLAYBACK_RATE);
           if (isTouch) {
-            [0, 20, 50, 100, 150].forEach((ms, i) => {
+            [0, 20, 50, 100, 150].forEach((ms) => {
               setTimeout(() => {
                 try {
                   const px = playerRef.current;
@@ -229,12 +255,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
               }, ms);
             });
           }
-          const now = Date.now();
-          if (now - lastRateAlertRef.current > 3000) {
-            lastRateAlertRef.current = now;
-            alert("1.4배속까지만 사용할 수 있습니다. 1.4배속으로 조정됩니다.");
-          }
+          showRateToast();
         } else {
+          lastKnownRateRef.current = rate;
           if (rate !== capped) p.setPlaybackRate(capped);
           else if (isTouch) p.setPlaybackRate(capped);
         }
@@ -269,7 +292,29 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         rafIdRef.current = null;
       }
     };
-  }, [ready]);
+  }, [ready, showRateToast]);
+
+  useEffect(() => {
+    if (!ready) return;
+
+    const fallbackInterval = setInterval(() => {
+      try {
+        const p = playerRef.current;
+        if (!p) return;
+        if (p.getPlayerState() !== 1) return;
+        const rate = p.getPlaybackRate();
+        if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
+          p.setPlaybackRate(MAX_PLAYBACK_RATE);
+          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
+          showRateToast();
+        }
+      } catch (_: unknown) {
+        // ignore
+      }
+    }, RATE_FALLBACK_CHECK_MS);
+
+    return () => clearInterval(fallbackInterval);
+  }, [ready, showRateToast]);
 
   useEffect(() => {
     if (!ready || !assignmentId) return;
@@ -282,6 +327,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const rate = p.getPlaybackRate();
         if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
           p.setPlaybackRate(MAX_PLAYBACK_RATE);
+          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
+          showRateToast();
         }
 
         const state = p.getPlayerState();
@@ -345,7 +392,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         progressIntervalRef.current = null;
       }
     };
-  }, [ready, assignmentId, saveProgress]);
+  }, [ready, assignmentId, saveProgress, showRateToast]);
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
@@ -387,6 +434,14 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             style={{ width: `${Math.min(100, progressPercent)}%` }}
           />
         </div>
+        {toastMessage && (
+          <div
+            role="alert"
+            className="absolute bottom-4 left-4 right-4 z-10 rounded-lg bg-slate-900/95 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:min-w-[280px] sm:-translate-x-1/2"
+          >
+            {toastMessage}
+          </div>
+        )}
       </div>
       <p className="mt-2 text-center text-xs text-zinc-500">
         재생이 안 되면{" "}
