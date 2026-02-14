@@ -194,11 +194,13 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   }, [isClient, videoId, initialPosition]);
 
   const lastRateAlertRef = useRef(0);
+  const rafIdRef = useRef<number | null>(null);
+  const lastRafClampRef = useRef(0);
 
   useEffect(() => {
-    if (!ready || !assignmentId) return;
+    if (!ready) return;
 
-    const interval = setInterval(() => {
+    const clampRate = () => {
       try {
         const p = playerRef.current;
         if (!p) return;
@@ -214,10 +216,31 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       } catch (_: unknown) {
         // ignore
       }
-    }, RATE_CHECK_INTERVAL_MS);
+    };
 
-    return () => clearInterval(interval);
-  }, [ready, assignmentId]);
+    const interval = setInterval(clampRate, RATE_CHECK_INTERVAL_MS);
+
+    const RAF_CLAMP_MS = 80;
+    const runRaf = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        const now = Date.now();
+        if (now - lastRafClampRef.current >= RAF_CLAMP_MS) {
+          lastRafClampRef.current = now;
+          clampRate();
+        }
+      }
+      rafIdRef.current = requestAnimationFrame(runRaf);
+    };
+    rafIdRef.current = requestAnimationFrame(runRaf);
+
+    return () => {
+      clearInterval(interval);
+      if (rafIdRef.current != null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || !assignmentId) return;
