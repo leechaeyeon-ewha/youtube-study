@@ -8,6 +8,7 @@ const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
  * 학생 비밀번호 재설정 링크 발급: 이름으로 이메일 조회 후 recovery 링크 생성.
  * Supabase 대시보드 → Authentication → URL Configuration 에서
  * Redirect URLs에 https://도메인/reset-password, http://localhost:3000/reset-password 를 추가해야 합니다.
+ * 배포 시 Vercel 등에 NEXT_PUBLIC_APP_URL=https://실제도메인 을 설정하면 리다이렉트가 안정적으로 동작합니다.
  */
 export async function POST(req: Request) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -37,13 +38,26 @@ export async function POST(req: Request) {
     );
   }
 
+  // 재설정 후 리다이렉트할 앱 주소. 배포 시 NEXT_PUBLIC_APP_URL 설정 권장.
+  const forwardedProto = req.headers.get("x-forwarded-proto");
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const origin = req.headers.get("origin");
+  const host = req.headers.get("host");
+  let originOrigin: string | null = null;
+  if (origin) {
+    try {
+      originOrigin = new URL(origin).origin;
+    } catch {
+      // ignore invalid origin
+    }
+  }
   const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (req.headers.get("x-forwarded-proto") && req.headers.get("x-forwarded-host")
-      ? `${req.headers.get("x-forwarded-proto")}://${req.headers.get("x-forwarded-host")}`
-      : null) ||
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
+    (forwardedProto && forwardedHost ? `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "") : null) ||
+    originOrigin ||
+    (host ? `${forwardedProto === "https" ? "https" : "http"}://${host}`.replace(/\/$/, "") : null) ||
     "http://localhost:3000";
-  const redirectTo = `${baseUrl.replace(/\/$/, "")}/reset-password`;
+  const redirectTo = `${baseUrl}/reset-password`;
 
   const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
     type: "recovery",
