@@ -216,7 +216,7 @@ export default function AdminVideosPage() {
       setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다.` });
       setSelectedVideoIds([]);
       loadVideos();
-    } catch (err) {
+    } catch (err: unknown) {
       setBulkMessage({ type: "error", text: err instanceof Error ? err.message : "삭제에 실패했습니다." });
     } finally {
       setDeleteLoading(false);
@@ -294,7 +294,7 @@ export default function AdminVideosPage() {
       setAssignClassId("");
       setAssignStudentIds([]);
       loadVideos();
-    } catch (err) {
+    } catch (err: unknown) {
       setAssignMessage({ type: "error", text: err instanceof Error ? err.message : "할당 실패" });
     } finally {
       setAssignLoading(false);
@@ -345,7 +345,7 @@ export default function AdminVideosPage() {
       setSettingsStudentIds([]);
       setSelectedVideoIds([]);
       loadVideos();
-    } catch (err) {
+    } catch (err: unknown) {
       setSettingsMessage({ type: "error", text: err instanceof Error ? err.message : "설정 적용 실패" });
     } finally {
       setSettingsLoading(false);

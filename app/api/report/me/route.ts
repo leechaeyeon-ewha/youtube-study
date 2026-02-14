@@ -13,26 +13,41 @@ export async function GET(req: Request) {
   }
 
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-  if (userError || !user) {
+  const userResult = await supabase.auth.getUser(token);
+  const user = userResult?.data?.user ?? null;
+  if (userResult?.error || !user) {
     return NextResponse.json({ allowed: false }, { status: 401 });
   }
 
-  const { data: profile, error: profileError } = await supabase
+  const profileResult = await supabase
     .from("profiles")
     .select("id, full_name, role")
     .eq("id", user.id)
     .single();
-
-  if (profileError || !profile || profile.role !== "student") {
+  const profile = profileResult?.data ?? null;
+  if (profileResult?.error || !profile || profile.role !== "student") {
     return NextResponse.json({ allowed: false }, { status: 403 });
   }
 
   const now = new Date();
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const nowTs = now.getTime();
+  if (!Number.isFinite(nowTs)) {
+    return NextResponse.json({ allowed: false }, { status: 500 });
+  }
+  const weekAgo = new Date(nowTs - 7 * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(nowTs - 30 * 24 * 60 * 60 * 1000);
   const weekIso = weekAgo.toISOString();
   const monthIso = monthAgo.toISOString();
+  if (weekAgo.getTime() > nowTs || monthAgo.getTime() > nowTs) {
+    return NextResponse.json({
+      allowed: true,
+      studentName: profile.full_name ?? "학생",
+      weeklyCompletion: 0,
+      monthlyCompletion: 0,
+      recentVideos: [],
+      comment: "최근 학습 이력이 없습니다. 꾸준한 시청을 권장합니다.",
+    });
+  }
 
   const { data: assignments } = await supabase
     .from("assignments")
@@ -55,13 +70,17 @@ export async function GET(req: Request) {
   const monthlyCompletion =
     inMonth.length === 0 ? 0 : Math.round((inMonth.filter((a) => a.is_completed).length / inMonth.length) * 100);
 
+  const safePercent = (p: unknown): number => {
+    const n = typeof p === "number" && Number.isFinite(p) ? p : 0;
+    return n >= 0 && n <= 100 ? n : 0;
+  };
   const recentVideos = inWeek
     .map((a) => {
       const v = Array.isArray(a.videos) ? a.videos[0] : a.videos;
       return {
         title: (v as { title?: string } | null)?.title ?? "영상",
-        is_completed: a.is_completed,
-        progress_percent: typeof a.progress_percent === "number" ? a.progress_percent : 0,
+        is_completed: Boolean(a.is_completed),
+        progress_percent: safePercent(a.progress_percent),
         last_watched_at: a.last_watched_at,
       };
     })

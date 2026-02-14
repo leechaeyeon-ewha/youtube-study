@@ -121,7 +121,7 @@ export async function POST(req: Request) {
       const result = await fetchPlaylistItems(playlistId, env.youtubeApiKey);
       playlistTitle = result.title;
       items = result.items;
-    } catch (err) {
+    } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "재생목록을 가져오지 못했습니다.";
       return NextResponse.json(
         { error: message },
@@ -184,7 +184,7 @@ export async function POST(req: Request) {
       skipped,
       total: items.length,
     });
-  } catch (err) {
+  } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
       { error: `재생목록 등록 중 오류가 발생했습니다. ${message}` },

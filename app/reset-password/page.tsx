@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import type { Session, AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
@@ -20,14 +21,17 @@ export default function ResetPasswordPage() {
       setSessionReady(false);
       return;
     }
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((res: { data?: { session?: Session | null } }) => {
       setChecked(true);
+      const session: Session | null = res?.data?.session ?? null;
       setSessionReady(!!session);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSessionReady(!!session);
+    const authStateResult = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, newSession: Session | null) => {
+      setSessionReady(!!newSession);
     });
-    return () => subscription.unsubscribe();
+    const authStateData = authStateResult?.data;
+    const subscription = authStateData?.subscription;
+    return () => subscription?.unsubscribe();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,7 +55,7 @@ export default function ResetPasswordPage() {
         router.replace("/login");
         router.refresh();
       }, 1500);
-    } catch (err) {
+    } catch (err: unknown) {
       setMessage({
         type: "error",
         text: err instanceof Error ? err.message : "비밀번호 변경에 실패했습니다.",

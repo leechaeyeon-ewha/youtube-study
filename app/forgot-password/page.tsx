@@ -29,7 +29,7 @@ export default function ForgotPasswordPage() {
         return;
       }
       throw new Error("재설정 링크를 받지 못했습니다.");
-    } catch (err) {
+    } catch (err: unknown) {
       setMessage({
         type: "error",
         text: err instanceof Error ? err.message : "비밀번호 재설정 요청에 실패했습니다.",

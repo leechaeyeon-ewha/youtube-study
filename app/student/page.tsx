@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { getThumbnailUrl } from "@/lib/youtube";
 
@@ -178,7 +179,8 @@ export default function StudentPage() {
     if (tab !== "report" || !supabase) return;
     setReportLoading(true);
     setReportError(null);
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((res: { data?: { session?: Session | null } }) => {
+      const session: Session | null = res?.data?.session ?? null;
       const token = session?.access_token;
       if (!token) {
         setReportError("로그인 세션이 없습니다.");

@@ -93,20 +93,27 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
 
   const saveProgress = useCallback(
     async (percent: number, completed: boolean, playedSeconds: number) => {
-      if (!supabase) return;
+      if (!supabase || !assignmentId?.trim()) return;
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
+      if (!Number.isFinite(playedSeconds) || playedSeconds < 0) return;
+      if (percent === 0 && playedSeconds === 0 && !completed) return;
       const now = new Date().toISOString();
+      const progressPercent = completed ? 100 : Math.min(100, Math.round(percent * 100) / 100);
+      const lastPosition = playedSeconds;
+      if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) return;
+      if (!Number.isFinite(lastPosition) || lastPosition < 0) return;
       try {
         await supabase
           .from("assignments")
           .update({
-            progress_percent: completed ? 100 : Math.min(100, Math.round(percent * 100) / 100),
+            progress_percent: progressPercent,
             is_completed: completed,
-            last_position: playedSeconds,
+            last_position: lastPosition,
             last_watched_at: now,
             updated_at: now,
           })
           .eq("id", assignmentId);
-      } catch (_) {
+      } catch (_: unknown) {
         // ignore
       }
     },
@@ -148,7 +155,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           },
         }) as unknown as YTPlayer;
       })
-      .catch(() => {
+      .catch((_err: unknown) => {
         if (mounted) setEmbedError(true);
       });
 
@@ -172,7 +179,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           p.setPlaybackRate(1.4);
           alert("1.5배속 이상은 사용할 수 없습니다. 1.4배속으로 조정됩니다.");
         }
-      } catch (_) {
+      } catch (_: unknown) {
         // ignore
       }
     }, 1000);
@@ -196,6 +203,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         if (duration <= 0) duration = durationRef.current;
         if (duration > 0) durationRef.current = duration;
 
+        if (!Number.isFinite(current) || current < 0) return;
+        if (!Number.isFinite(duration) || duration <= 0) return;
+
         if (current > maxWatchedRef.current + SKIP_TOLERANCE_SEC) {
           p.seekTo(maxWatchedRef.current, true);
           alert("영상을 건너뛸 수 없습니다. 시청한 위치로 되돌립니다.");
@@ -207,6 +217,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         }
 
         const percent = duration > 0 ? current / duration : 0;
+        if (!Number.isFinite(percent) || percent < 0 || percent > 1) return;
         setProgressPercent(percent * 100);
 
         if (percent >= COMPLETE_THRESHOLD) {
@@ -218,13 +229,13 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const now = Date.now();
         if (now - lastSaveTimeRef.current >= PROGRESS_SAVE_INTERVAL_MS) {
           const toSave = Math.min(100, Math.round(percent * 100 * 100) / 100);
-          if (toSave > lastSavedPercentRef.current) {
+          if (Number.isFinite(toSave) && toSave >= 0 && toSave > lastSavedPercentRef.current) {
             saveProgress(toSave, false, current);
             lastSavedPercentRef.current = toSave;
             lastSaveTimeRef.current = now;
           }
         }
-      } catch (_) {
+      } catch (_err: unknown) {
         // ignore
       }
     }, 500);

@@ -222,7 +222,7 @@ export default function AdminClassesPage() {
       setBulkAssignMessage({ type: "success", text: `${className}에 ${inserted}건 배정되었습니다. (이미 있던 건 제외)` });
       setBulkAssignVideoIds([]);
       load();
-    } catch (err) {
+    } catch (err: unknown) {
       setBulkAssignMessage({ type: "error", text: err instanceof Error ? err.message : "배정 실패" });
     } finally {
       setBulkAssignLoading(false);
