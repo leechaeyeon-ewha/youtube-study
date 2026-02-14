@@ -34,8 +34,29 @@ interface AssignmentWithVideo {
     | null;
 }
 
+interface LibraryVideo {
+  id: string;
+  title: string;
+  video_id: string;
+  course_id: string | null;
+  courses?: { id: string; title: string } | { id: string; title: string }[] | null;
+}
+
+interface LibraryCourseGroup {
+  courseId: string | null;
+  courseTitle: string;
+  videos: LibraryVideo[];
+}
+
 /** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
 const DASHBOARD_CACHE_TTL_MS = 30 * 1000;
+
+const ENROLLMENT_STATUS_MIGRATION_SQL = `-- profiles에 재원/퇴원 상태 컬럼 추가
+alter table public.profiles
+  add column if not exists enrollment_status text not null default 'enrolled'
+  check (enrollment_status in ('enrolled', 'withdrawn'));
+
+comment on column public.profiles.enrollment_status is 'enrolled: 재원생, withdrawn: 퇴원생';`;
 let dashboardCache: {
   students: Profile[];
   assignmentsByUser: Record<string, AssignmentWithVideo[]>;
@@ -64,6 +85,14 @@ export default function AdminDashboardPage() {
   const [enrollmentTab, setEnrollmentTab] = useState<"enrolled" | "withdrawn">("enrolled");
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [reEnrollUserId, setReEnrollUserId] = useState<string | null>(null);
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [migrationRunning, setMigrationRunning] = useState(false);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+
+  const [showAssignFromLibrary, setShowAssignFromLibrary] = useState(false);
+  const [libraryGroups, setLibraryGroups] = useState<LibraryCourseGroup[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [assignFromLibraryVideoId, setAssignFromLibraryVideoId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) return;
@@ -224,6 +253,86 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function loadLibrary() {
+    if (!supabase) return;
+    setLibraryLoading(true);
+    setLibraryGroups([]);
+    try {
+      const { data, error } = await supabase
+        .from("videos")
+        .select("id, title, video_id, course_id, courses(id, title)")
+        .order("created_at", { ascending: false });
+      if (error) {
+        const { data: fallback, error: err2 } = await supabase
+          .from("videos")
+          .select("id, title, video_id")
+          .order("created_at", { ascending: false });
+        if (err2) throw err2;
+        const list = (fallback ?? []) as LibraryVideo[];
+        setLibraryGroups([{ courseId: null, courseTitle: "등록된 동영상", videos: list.map((v) => ({ ...v, course_id: null })) }]);
+        setLibraryLoading(false);
+        return;
+      }
+      const list = (data ?? []) as LibraryVideo[];
+      const normalized = list.map((row) => ({
+        ...row,
+        courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
+      }));
+      const byCourse = new Map<string | null, LibraryVideo[]>();
+      for (const v of normalized) {
+        const cid = v.course_id ?? null;
+        if (!byCourse.has(cid)) byCourse.set(cid, []);
+        byCourse.get(cid)!.push(v);
+      }
+      const groups: LibraryCourseGroup[] = [];
+      byCourse.forEach((videos, courseId) => {
+        const courseTitle = videos[0]?.courses && !Array.isArray(videos[0].courses) ? (videos[0].courses as { title: string }).title : "기타 동영상";
+        groups.push({ courseId, courseTitle, videos });
+      });
+      groups.sort((a, b) => {
+        if (a.courseId == null) return 1;
+        if (b.courseId == null) return -1;
+        return a.courseTitle.localeCompare(b.courseTitle);
+      });
+      setLibraryGroups(groups);
+    } catch (_) {
+      setLibraryGroups([]);
+    } finally {
+      setLibraryLoading(false);
+    }
+  }
+
+  async function handleAssignFromLibrary(videoDbId: string) {
+    if (!assignUserId || !supabase) return;
+    setAssignFromLibraryVideoId(videoDbId);
+    setAssignMessage(null);
+    try {
+      const { error } = await supabase.from("assignments").insert({
+        user_id: assignUserId,
+        video_id: videoDbId,
+        is_completed: false,
+        progress_percent: 0,
+        last_position: 0,
+        is_visible: true,
+        is_weekly_assignment: false,
+      });
+      if (error) {
+        if (error.code === "23505") throw new Error("이미 해당 학생에게 배정된 영상입니다.");
+        throw new Error(error.message);
+      }
+      setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
+      dashboardCache = null;
+      await load();
+    } catch (err: unknown) {
+      setAssignMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "할당에 실패했습니다.",
+      });
+    } finally {
+      setAssignFromLibraryVideoId(null);
+    }
+  }
+
   /** 재원생 → 퇴원 처리 (상태만 변경, 계정 유지) */
   async function handleWithdraw(userId: string, fullName: string) {
     if (!confirm(`"${fullName}" 학생을 퇴원 처리하시겠습니까?\n퇴원생 목록으로 이동하며, 계정과 진도 기록은 유지됩니다.`)) return;
@@ -240,8 +349,16 @@ export default function AdminDashboardPage() {
         body: JSON.stringify({ user_id: userId, enrollment_status: "withdrawn" }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "퇴원 처리 실패");
-      load();
+      if (!res.ok) {
+        const msg = data.error || "퇴원 처리 실패";
+        if (typeof msg === "string" && msg.includes("enrollment_status")) {
+          setShowMigrationModal(true);
+        }
+        throw new Error(msg);
+      }
+      dashboardCache = null;
+      await load();
+      setEnrollmentTab("withdrawn");
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "퇴원 처리에 실패했습니다.");
     } finally {
@@ -265,9 +382,14 @@ export default function AdminDashboardPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || "재원 복귀 실패");
+        const msg = data.error || "재원 복귀 실패";
+        if (typeof msg === "string" && msg.includes("enrollment_status")) {
+          setShowMigrationModal(true);
+        }
+        throw new Error(msg);
       }
-      load();
+      dashboardCache = null;
+      await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "재원 복귀에 실패했습니다.");
     } finally {
@@ -292,7 +414,8 @@ export default function AdminDashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "삭제 실패");
-      load();
+      dashboardCache = null;
+      await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     } finally {
@@ -401,7 +524,102 @@ export default function AdminDashboardPage() {
             </span>
           )}
         </form>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          퇴원/재원 버튼이 안 되면{" "}
+          <button
+            type="button"
+            onClick={() => setShowMigrationModal(true)}
+            className="text-indigo-600 underline hover:text-indigo-700 dark:text-indigo-400"
+          >
+            enrollment_status 컬럼 추가 안내
+          </button>
+        </p>
       </section>
+
+      {/* enrollment_status 마이그레이션 안내 모달 */}
+      {showMigrationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">
+              퇴원/재원 기능 사용을 위한 설정
+            </h3>
+            <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
+              Supabase 대시보드 → <strong>SQL Editor</strong> → 새 쿼리에서 아래 SQL을 붙여넣고 <strong>Run</strong>을 눌러 주세요. 한 번만 실행하면 됩니다.
+            </p>
+            <pre className="mb-4 overflow-x-auto rounded-lg bg-slate-100 p-4 text-xs text-slate-800 dark:bg-zinc-800 dark:text-slate-200">
+              {ENROLLMENT_STATUS_MIGRATION_SQL}
+            </pre>
+            {migrationError && (
+              <p className="mb-3 text-sm text-red-600 dark:text-red-400">{migrationError}</p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={migrationRunning}
+                onClick={async () => {
+                  setMigrationError(null);
+                  setMigrationRunning(true);
+                  try {
+                    const { data: { session } } = await supabase!.auth.getSession();
+                    const res = await fetch("/api/admin/migration/enrollment-status", {
+                      method: "POST",
+                      headers: {
+                        Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+                      },
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                      setMigrationError(data.error || "실행 실패");
+                      if (data.sql) navigator.clipboard?.writeText(data.sql);
+                      return;
+                    }
+                    setShowMigrationModal(false);
+                    dashboardCache = null;
+                    await load();
+                    alert("enrollment_status 컬럼이 추가되었습니다. 퇴원/재원 기능을 사용할 수 있습니다.");
+                  } catch (e) {
+                    setMigrationError(e instanceof Error ? e.message : "실행 중 오류가 발생했습니다.");
+                  } finally {
+                    setMigrationRunning(false);
+                  }
+                }}
+                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {migrationRunning ? "실행 중…" : "앱에서 실행 (DATABASE_URL 설정 시)"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMigrationError(null);
+                  navigator.clipboard?.writeText(ENROLLMENT_STATUS_MIGRATION_SQL);
+                  alert("SQL이 클립보드에 복사되었습니다. Supabase SQL Editor에 붙여넣고 실행하세요.");
+                }}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                SQL 복사
+              </button>
+              <a
+                href="https://supabase.com/dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+              >
+                Supabase 대시보드 (프로젝트 → SQL Editor)
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMigrationModal(false);
+                  setMigrationError(null);
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 학생 목록 + 영상 할당 + 모니터링 */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -468,20 +686,31 @@ export default function AdminDashboardPage() {
                         setAssignUserId(assignUserId === s.id ? null : s.id);
                         setAssignUrl("");
                         setAssignMessage(null);
+                        if (assignUserId === s.id) setShowAssignFromLibrary(false);
                       }}
                       className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
                     >
                       {assignUserId === s.id ? "취소" : "영상 할당"}
                     </button>
                     {enrollmentTab === "enrolled" ? (
-                      <button
-                        type="button"
-                        onClick={() => handleWithdraw(s.id, s.full_name || s.email || "이 학생")}
-                        disabled={deleteLoading}
-                        className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-200 disabled:opacity-50 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
-                      >
-                        {deleteUserId === s.id ? "처리 중..." : "퇴원 처리"}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleWithdraw(s.id, s.full_name || s.email || "이 학생")}
+                          disabled={deleteLoading}
+                          className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-200 disabled:opacity-50 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
+                        >
+                          {deleteUserId === s.id ? "처리 중..." : "퇴원 처리"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteStudent(s.id, s.full_name || s.email || "이 학생")}
+                          disabled={deleteLoading}
+                          className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                        >
+                          {deleteUserId === s.id ? "삭제 중..." : "완전 삭제"}
+                        </button>
+                      </>
                     ) : (
                       <>
                         <button
@@ -569,6 +798,66 @@ export default function AdminDashboardPage() {
                       </span>
                     )}
                   </form>
+                )}
+
+                {assignUserId === s.id && (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showAssignFromLibrary;
+                        setShowAssignFromLibrary(next);
+                        if (next) loadLibrary();
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+                    >
+                      {showAssignFromLibrary ? "등록된 목록 접기" : "등록된 재생목록/동영상에서 할당"}
+                    </button>
+                    {showAssignFromLibrary && (
+                      <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-zinc-600 dark:bg-zinc-800">
+                        {libraryLoading ? (
+                          <p className="p-4 text-sm text-slate-500 dark:text-slate-400">불러오는 중...</p>
+                        ) : libraryGroups.length === 0 ? (
+                          <p className="p-4 text-sm text-slate-500 dark:text-slate-400">등록된 재생목록/동영상이 없습니다.</p>
+                        ) : (
+                          <ul className="divide-y divide-slate-200 dark:divide-zinc-600">
+                            {libraryGroups.map((grp) => (
+                              <li key={grp.courseId ?? "single"}>
+                                <div className="bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 dark:bg-zinc-700 dark:text-slate-300">
+                                  {grp.courseTitle}
+                                </div>
+                                <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+                                  {grp.videos.map((v) => (
+                                    <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                                      <span className="min-w-0 truncate text-sm text-slate-800 dark:text-slate-200" title={v.title}>
+                                        {v.title}
+                                      </span>
+                                      <a
+                                        href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                                      >
+                                        보기
+                                      </a>
+                                      <button
+                                        type="button"
+                                        disabled={assignFromLibraryVideoId === v.id}
+                                        onClick={() => handleAssignFromLibrary(v.id)}
+                                        className="shrink-0 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                                      >
+                                        {assignFromLibraryVideoId === v.id ? "할당 중..." : "할당"}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 <div className="mt-3">
