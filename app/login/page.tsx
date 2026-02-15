@@ -123,7 +123,7 @@ function LoginPageContent() {
             />
           </div>
           <h1 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
-            학원 학습관
+            온라인 학습관
           </h1>
           <p className="mb-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
             관리자입니까? 학생입니까?

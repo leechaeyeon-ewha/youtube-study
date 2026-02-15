@@ -15,6 +15,7 @@ export default function AdminLayout({
   const pathname = usePathname();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -71,22 +72,29 @@ export default function AdminLayout({
     { href: "/admin/assign", label: "배정 목록" },
   ];
 
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-6">
+        {/* 모바일: 한 줄 로고 + 햄버거 */}
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 md:px-4 md:py-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-6">
             <Link
               href="/admin"
-              className="text-lg font-bold text-slate-800 dark:text-white hover:underline"
+              className="truncate text-base font-bold text-slate-800 dark:text-white hover:underline md:text-lg"
+              title="영어는 김현정 영어전문학원"
             >
-              영어는 김현정 영어전문학원
+              <span className="md:hidden">김현정 영어</span>
+              <span className="hidden md:inline">영어는 김현정 영어전문학원</span>
             </Link>
-            <span className="text-slate-400 dark:text-zinc-500">|</span>
-            <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+            <span className="hidden flex-shrink-0 text-slate-400 dark:text-zinc-500 md:inline">|</span>
+            <span className="hidden flex-shrink-0 text-sm font-medium text-slate-600 dark:text-slate-400 md:inline">
               관리자
             </span>
-            <nav className="flex gap-1">
+            <nav className="hidden gap-1 md:flex">
               {nav.map(({ href, label }) => (
                 <Link
                   key={href}
@@ -102,7 +110,7 @@ export default function AdminLayout({
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="hidden flex-shrink-0 items-center gap-4 md:flex">
             <span className="text-sm text-slate-500 dark:text-slate-400">
               {profile.full_name ?? profile.email ?? "Admin"}
             </span>
@@ -125,7 +133,68 @@ export default function AdminLayout({
               로그아웃
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((o) => !o)}
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-zinc-800 md:hidden"
+            aria-label={mobileMenuOpen ? "메뉴 닫기" : "메뉴 열기"}
+            aria-expanded={mobileMenuOpen}
+          >
+            {mobileMenuOpen ? (
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
         </div>
+
+        {/* 모바일 전용: 펼침 메뉴 */}
+        {mobileMenuOpen && (
+          <div className="border-t border-slate-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 md:hidden">
+            <nav className="flex flex-col gap-0.5">
+              {nav.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
+                    pathname === href
+                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                      : "text-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-zinc-700">
+              <span className="w-full truncate text-xs text-slate-500 dark:text-slate-400">
+                {profile.full_name ?? profile.email ?? "Admin"}
+              </span>
+              <Link
+                href="/"
+                className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-zinc-700 dark:text-slate-200"
+              >
+                학생 화면
+              </Link>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!supabase) return;
+                  await supabase.auth.signOut();
+                  router.replace("/login");
+                  router.refresh();
+                }}
+                className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-zinc-700 dark:text-slate-200"
+              >
+                로그아웃
+              </button>
+            </div>
+          </div>
+        )}
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
     </div>

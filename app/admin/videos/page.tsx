@@ -6,7 +6,8 @@ import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
 import type { Video } from "@/lib/types";
 
 interface VideoWithCourse extends Video {
-  courses: { id: string; title: string } | null;
+  sort_order?: number;
+  courses: { id: string; title: string; sort_order?: number } | null;
   is_visible?: boolean;
   is_weekly_assignment?: boolean;
 }
@@ -14,6 +15,7 @@ interface VideoWithCourse extends Video {
 interface CourseGroup {
   courseId: string | null;
   courseTitle: string;
+  courseSortOrder: number;
   videos: VideoWithCourse[];
 }
 
@@ -69,6 +71,7 @@ export default function AdminVideosPage() {
   const [bulkMessage, setBulkMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
+  const [reorderLoading, setReorderLoading] = useState<string | null>(null);
 
   async function loadVideos() {
     if (!supabase) return;
@@ -79,13 +82,14 @@ export default function AdminVideosPage() {
     }
     const { data, error } = await supabase
       .from("videos")
-      .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, created_at, courses(id, title)")
+      .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, sort_order, created_at, courses(id, title, sort_order)")
       .order("created_at", { ascending: false });
     let groups: CourseGroup[] = [];
     if (!error && data) {
       const list = data as VideoWithCourse[];
       const normalized = list.map((row) => ({
         ...row,
+        sort_order: row.sort_order ?? 0,
         courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
       }));
       const byCourse = new Map<string | null, VideoWithCourse[]>();
@@ -96,12 +100,16 @@ export default function AdminVideosPage() {
       }
       byCourse.forEach((videos, courseId) => {
         const courseTitle = videos[0]?.courses?.title ?? "기타 영상";
-        groups.push({ courseId, courseTitle, videos });
+        const courseSortOrder = videos[0]?.courses?.sort_order ?? 0;
+        const sortedVideos = [...videos].sort(
+          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.created_at ?? "").localeCompare(b.created_at ?? "")
+        );
+        groups.push({ courseId, courseTitle, courseSortOrder, videos: sortedVideos });
       });
       groups.sort((a, b) => {
         if (a.courseId == null) return 1;
         if (b.courseId == null) return -1;
-        return a.courseTitle.localeCompare(b.courseTitle);
+        return a.courseSortOrder - b.courseSortOrder || a.courseTitle.localeCompare(b.courseTitle);
       });
       setCourseGroups(groups);
       videosPageCache = { courseGroups: groups, at: Date.now() };
@@ -260,6 +268,92 @@ export default function AdminVideosPage() {
       setSelectedVideoIds((prev) => [
         ...new Set([...prev, ...displayedVideos.map((v) => v.id)]),
       ]);
+    }
+  }
+
+  /** 재생목록(강좌) 순서: 위로 */
+  async function moveCourseUp(groupIndex: number) {
+    if (!supabase || groupIndex <= 0) return;
+    const groups = filteredPlaylistGroups;
+    const prev = groups[groupIndex - 1];
+    const curr = groups[groupIndex];
+    if (!prev?.courseId || !curr?.courseId) return;
+    setReorderLoading(`course-${curr.courseId}`);
+    videosPageCache = null;
+    try {
+      const [prevOrder, currOrder] = [prev.courseSortOrder, curr.courseSortOrder];
+      await Promise.all([
+        supabase.from("courses").update({ sort_order: currOrder }).eq("id", prev.courseId),
+        supabase.from("courses").update({ sort_order: prevOrder }).eq("id", curr.courseId),
+      ]);
+      await loadVideos();
+    } finally {
+      setReorderLoading(null);
+    }
+  }
+
+  /** 재생목록(강좌) 순서: 아래로 */
+  async function moveCourseDown(groupIndex: number) {
+    if (!supabase || groupIndex >= filteredPlaylistGroups.length - 1) return;
+    const groups = filteredPlaylistGroups;
+    const curr = groups[groupIndex];
+    const next = groups[groupIndex + 1];
+    if (!curr?.courseId || !next?.courseId) return;
+    setReorderLoading(`course-${curr.courseId}`);
+    videosPageCache = null;
+    try {
+      const [currOrder, nextOrder] = [curr.courseSortOrder, next.courseSortOrder];
+      await Promise.all([
+        supabase.from("courses").update({ sort_order: nextOrder }).eq("id", curr.courseId),
+        supabase.from("courses").update({ sort_order: currOrder }).eq("id", next.courseId),
+      ]);
+      await loadVideos();
+    } finally {
+      setReorderLoading(null);
+    }
+  }
+
+  /** 영상 순서: 위로 (같은 강좌 내 또는 기타 영상 목록 내) */
+  async function moveVideoUp(courseId: string | null, videoIndex: number) {
+    if (!supabase || videoIndex <= 0) return;
+    const group = courseGroups.find((g) => g.courseId === courseId);
+    if (!group) return;
+    const prev = group.videos[videoIndex - 1];
+    const curr = group.videos[videoIndex];
+    if (!prev || !curr) return;
+    setReorderLoading(`video-${curr.id}`);
+    videosPageCache = null;
+    try {
+      const [prevOrder, currOrder] = [prev.sort_order ?? 0, curr.sort_order ?? 0];
+      await Promise.all([
+        supabase.from("videos").update({ sort_order: currOrder }).eq("id", prev.id),
+        supabase.from("videos").update({ sort_order: prevOrder }).eq("id", curr.id),
+      ]);
+      await loadVideos();
+    } finally {
+      setReorderLoading(null);
+    }
+  }
+
+  /** 영상 순서: 아래로 */
+  async function moveVideoDown(courseId: string | null, videoIndex: number) {
+    if (!supabase || videoIndex >= (courseGroups.find((g) => g.courseId === courseId)?.videos.length ?? 0) - 1) return;
+    const group = courseGroups.find((g) => g.courseId === courseId);
+    if (!group) return;
+    const curr = group.videos[videoIndex];
+    const next = group.videos[videoIndex + 1];
+    if (!curr || !next) return;
+    setReorderLoading(`video-${curr.id}`);
+    videosPageCache = null;
+    try {
+      const [currOrder, nextOrder] = [curr.sort_order ?? 0, next.sort_order ?? 0];
+      await Promise.all([
+        supabase.from("videos").update({ sort_order: nextOrder }).eq("id", curr.id),
+        supabase.from("videos").update({ sort_order: currOrder }).eq("id", next.id),
+      ]);
+      await loadVideos();
+    } finally {
+      setReorderLoading(null);
     }
   }
 
@@ -518,26 +612,41 @@ export default function AdminVideosPage() {
           </div>
         ) : activeTab === "playlist" ? (
           <div className="space-y-4">
-            {filteredPlaylistGroups.map((group) => {
+            {filteredPlaylistGroups.map((group, groupIndex) => {
               const ids = group.videos.map((v) => v.id);
               const allInGroupSelected =
                 ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
               const isExpanded = expandedCourseId === group.courseId;
+              const courseBusy = group.courseId && reorderLoading === `course-${group.courseId}`;
               return (
                 <div
                   key={group.courseId ?? "none"}
                   className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedCourseId(
-                        isExpanded ? null : (group.courseId as string | null)
-                      )
-                    }
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 text-left dark:border-zinc-700"
-                  >
-                    <div className="flex items-center gap-3">
+                  <div className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-zinc-700">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <div className="flex flex-col gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => moveCourseUp(groupIndex)}
+                          disabled={groupIndex === 0 || !!courseBusy}
+                          className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-700 dark:hover:text-slate-300"
+                          title="위로"
+                          aria-label="재생목록 위로"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveCourseDown(groupIndex)}
+                          disabled={groupIndex === filteredPlaylistGroups.length - 1 || !!courseBusy}
+                          className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-700 dark:hover:text-slate-300"
+                          title="아래로"
+                          aria-label="재생목록 아래로"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        </button>
+                      </div>
                       <input
                         type="checkbox"
                         checked={allInGroupSelected}
@@ -548,56 +657,91 @@ export default function AdminVideosPage() {
                         className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         onClick={(e) => e.stopPropagation()}
                       />
-                      <div>
-                        <h3 className="text-base font-semibold text-slate-800 dark:text-white">
-                          {group.courseTitle}
-                        </h3>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          재생목록 내 영상 {group.videos.length}개
-                        </p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedCourseId(
+                            isExpanded ? null : (group.courseId as string | null)
+                          )
+                        }
+                        className="flex flex-1 items-center justify-between gap-3 text-left min-w-0"
+                      >
+                        <div className="min-w-0">
+                          <h3 className="text-base font-semibold text-slate-800 dark:text-white truncate">
+                            {group.courseTitle}
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            재생목록 내 영상 {group.videos.length}개
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
+                          {isExpanded ? "접기 ▲" : "영상 보기 ▼"}
+                        </span>
+                      </button>
                     </div>
-                    <span className="text-sm text-slate-500 dark:text-slate-400">
-                      {isExpanded ? "접기 ▲" : "영상 보기 ▼"}
-                    </span>
-                  </button>
+                  </div>
                   {isExpanded && (
                     <ul className="divide-y divide-slate-100 dark:divide-zinc-800">
-                      {group.videos.map((v) => (
-                        <li
-                          key={v.id}
-                          className="flex items-center gap-3 px-4 py-3 bg-slate-50/60 dark:bg-zinc-900"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedVideoIds.includes(v.id)}
-                            onChange={() => toggleSelectVideo(v.id)}
-                            className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
-                            <img
-                              src={getThumbnailUrl(v.video_id)}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
-                              {v.title}
-                            </p>
-                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                              {v.video_id}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(v.id)}
-                            className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                      {group.videos.map((v, videoIndex) => {
+                        const videoBusy = reorderLoading === `video-${v.id}`;
+                        return (
+                          <li
+                            key={v.id}
+                            className="flex items-center gap-3 px-4 py-3 bg-slate-50/60 dark:bg-zinc-900"
                           >
-                            삭제
-                          </button>
-                        </li>
-                      ))}
+                            <div className="flex flex-col gap-0.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => moveVideoUp(group.courseId, videoIndex)}
+                                disabled={videoIndex === 0 || !!videoBusy}
+                                className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
+                                title="위로"
+                                aria-label="영상 위로"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveVideoDown(group.courseId, videoIndex)}
+                                disabled={videoIndex === group.videos.length - 1 || !!videoBusy}
+                                className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
+                                title="아래로"
+                                aria-label="영상 아래로"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                              </button>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={selectedVideoIds.includes(v.id)}
+                              onChange={() => toggleSelectVideo(v.id)}
+                              className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
+                              <img
+                                src={getThumbnailUrl(v.video_id)}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                                {v.title}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                {v.video_id}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(v.id)}
+                              className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                            >
+                              삭제
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
@@ -606,41 +750,71 @@ export default function AdminVideosPage() {
           </div>
         ) : (
           <ul className="space-y-3">
-            {filteredStandaloneVideos.map((v) => (
-              <li
-                key={v.id}
-                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedVideoIds.includes(v.id)}
-                  onChange={() => toggleSelectVideo(v.id)}
-                  className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
-                  <img
-                    src={getThumbnailUrl(v.video_id)}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
-                    {v.title}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {v.video_id}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(v.id)}
-                  className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-                >
-                  삭제
-                </button>
-              </li>
-            ))}
+            {(() => {
+              const standaloneGroup = courseGroups.find((g) => g.courseId === null);
+              const standaloneVideosList = standaloneGroup?.videos ?? [];
+              return filteredStandaloneVideos.map((v) => {
+                const videoIndex = standaloneVideosList.findIndex((vv) => vv.id === v.id);
+                const videoBusy = reorderLoading === `video-${v.id}`;
+                return (
+                  <li
+                    key={v.id}
+                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                  >
+                    <div className="flex flex-col gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => moveVideoUp(null, videoIndex)}
+                        disabled={videoIndex <= 0 || !!videoBusy}
+                        className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
+                        title="위로"
+                        aria-label="영상 위로"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveVideoDown(null, videoIndex)}
+                        disabled={videoIndex >= standaloneVideosList.length - 1 || videoIndex < 0 || !!videoBusy}
+                        className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
+                        title="아래로"
+                        aria-label="영상 아래로"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={selectedVideoIds.includes(v.id)}
+                      onChange={() => toggleSelectVideo(v.id)}
+                      className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
+                      <img
+                        src={getThumbnailUrl(v.video_id)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                        {v.title}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        {v.video_id}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(v.id)}
+                      className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                    >
+                      삭제
+                    </button>
+                  </li>
+                );
+              });
+            })()}
           </ul>
         )}
       </section>

@@ -626,7 +626,7 @@ export default function StudentPage() {
                     학습 이력 (최근 7일)
                   </h2>
                   <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-                    학원 학습관에서 시청한 영상만 진도가 기록됩니다. 각 영상의 저장된 진도 %를 표시합니다.
+                    온라인 학습관에서 시청한 영상만 진도가 기록됩니다. 각 영상의 저장된 진도 %를 표시합니다.
                   </p>
                   {(reportData.recentVideos ?? []).length === 0 ? (
                     <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">

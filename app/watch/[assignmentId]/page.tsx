@@ -123,7 +123,7 @@ export default function WatchPage() {
               : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 영상을 끝까지 시청하면 완료 처리됩니다.`}
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-            재생 배속은 1배속으로만 적용됩니다. 가로 모드로 보시면 와이드 뷰가 적용됩니다.
+            재생 배속은 1.4배속까지만 지원됩니다. 가로 모드로 보시면 와이드 뷰가 적용됩니다.
           </p>
         </div>
       </main>
