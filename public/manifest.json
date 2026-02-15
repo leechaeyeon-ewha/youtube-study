@@ -1,12 +1,17 @@
 {
+  "id": "/",
   "name": "영어는 김현정 영어전문학원",
   "short_name": "김현정 영어",
   "description": "영어는 김현정 영어전문학원 학원 학습관",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait-primary",
   "background_color": "#0f172a",
   "theme_color": "#0f766e",
-  "orientation": "portrait-primary",
+  "categories": ["education"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/pwa-icon.png",

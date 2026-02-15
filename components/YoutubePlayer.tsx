@@ -7,11 +7,11 @@ const SKIP_TOLERANCE_SEC = 0.5;
 const LOCKED_PLAYBACK_RATE = 1;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
-const RATE_CHECK_INTERVAL_MS = 50;
-const RATE_CHECK_INTERVAL_MOBILE_MS = 16;
-const RATE_FALLBACK_CHECK_MS = 1000;
+/** 배속 체크 주기: 너무 짧으면 오류·깜빡임 유발 가능 → 1초로 완화 */
+const RATE_CHECK_INTERVAL_MS = 1000;
 const RATE_TOAST_MESSAGE = "배속 변경은 허용되지 않습니다. 1배속만 사용 가능합니다.";
-const TOAST_DURATION_MS = 3000;
+const TOAST_DURATION_MS = 2500;
+const TOAST_COOLDOWN_MS = 8000;
 
 declare global {
   interface Window {
@@ -47,6 +47,8 @@ interface Props {
   videoId: string;
   assignmentId: string;
   initialPosition?: number;
+  /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 */
+  preventSkip?: boolean;
 }
 
 function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
@@ -76,7 +78,7 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
   });
 }
 
-export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0 }: Props) {
+export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -153,7 +155,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
-            fs: 0,
+            fs: 1,
             start: Math.floor(initialPosition),
           },
           events: {
@@ -171,20 +173,15 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             },
             onStateChange: () => {
               if (!mounted || !playerRef.current) return;
-              const forceRateCap = () => {
-                try {
-                  const p = playerRef.current;
-                  if (!p) return;
-                  const r = p.getPlaybackRate();
-                  if (typeof r !== "number" || !Number.isFinite(r) || r !== LOCKED_PLAYBACK_RATE) {
-                    p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
-                  }
-                } catch {
-                  // ignore
+              try {
+                const p = playerRef.current;
+                const r = p.getPlaybackRate();
+                if (typeof r !== "number" || !Number.isFinite(r) || r !== LOCKED_PLAYBACK_RATE) {
+                  p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
                 }
-              };
-              forceRateCap();
-              [20, 50, 100, 150, 250, 400, 600, 900].forEach((ms) => setTimeout(forceRateCap, ms));
+              } catch {
+                // ignore
+              }
             },
           },
         }) as unknown as YTPlayer;
@@ -201,13 +198,10 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, [isClient, videoId, initialPosition]);
 
-  const rafIdRef = useRef<number | null>(null);
-  const lastRafClampRef = useRef(0);
-
   const lastToastTimeRef = useRef(0);
   const showRateToast = useCallback(() => {
     const now = Date.now();
-    if (now - lastToastTimeRef.current < TOAST_DURATION_MS) return;
+    if (now - lastToastTimeRef.current < TOAST_COOLDOWN_MS) return;
     lastToastTimeRef.current = now;
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMessage(RATE_TOAST_MESSAGE);
@@ -223,13 +217,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, []);
 
+  /** 배속 1x 고정: 단일 인터벌로만 체크 (rAF/다중 타이머 제거 → 오류·깜빡임 감소). YouTube 설정(배속) 버튼은 API로 숨길 수 없음. */
   useEffect(() => {
     if (!ready) return;
-
-    const isTouch =
-      typeof navigator !== "undefined" &&
-      (navigator.maxTouchPoints > 0 || (typeof window !== "undefined" && "ontouchstart" in window));
-    const intervalMs = isTouch ? RATE_CHECK_INTERVAL_MOBILE_MS : RATE_CHECK_INTERVAL_MS;
 
     const clampRate = () => {
       try {
@@ -239,76 +229,17 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
           lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
           p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
-          if (isTouch) {
-            [0, 20, 50, 100, 150].forEach((ms) => {
-              setTimeout(() => {
-                try {
-                  const px = playerRef.current;
-                  if (px && px.getPlaybackRate() !== LOCKED_PLAYBACK_RATE) px.setPlaybackRate(LOCKED_PLAYBACK_RATE);
-                } catch {
-                  // ignore
-                }
-              }, ms);
-            });
-          }
           showRateToast();
         } else {
           lastKnownRateRef.current = rate;
-          if (isTouch) p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
         }
       } catch (_: unknown) {
         // ignore
       }
     };
 
-    const interval = setInterval(clampRate, intervalMs);
-
-    const RAF_CLAMP_MS = isTouch ? 0 : 50;
-    const runRaf = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        if (isTouch) {
-          clampRate();
-        } else {
-          const now = Date.now();
-          if (now - lastRafClampRef.current >= RAF_CLAMP_MS) {
-            lastRafClampRef.current = now;
-            clampRate();
-          }
-        }
-      }
-      rafIdRef.current = requestAnimationFrame(runRaf);
-    };
-    rafIdRef.current = requestAnimationFrame(runRaf);
-
-    return () => {
-      clearInterval(interval);
-      if (rafIdRef.current != null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
-  }, [ready, showRateToast]);
-
-  useEffect(() => {
-    if (!ready) return;
-
-    const fallbackInterval = setInterval(() => {
-      try {
-        const p = playerRef.current;
-        if (!p) return;
-        if (p.getPlayerState() !== 1) return;
-        const rate = p.getPlaybackRate();
-        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
-          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
-          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
-          showRateToast();
-        }
-      } catch (_: unknown) {
-        // ignore
-      }
-    }, RATE_FALLBACK_CHECK_MS);
-
-    return () => clearInterval(fallbackInterval);
+    const interval = setInterval(clampRate, RATE_CHECK_INTERVAL_MS);
+    return () => clearInterval(interval);
   }, [ready, showRateToast]);
 
   useEffect(() => {
@@ -318,13 +249,6 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       try {
         const p = playerRef.current;
         if (!p) return;
-
-        const rate = p.getPlaybackRate();
-        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
-          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
-          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
-          showRateToast();
-        }
 
         const state = p.getPlayerState();
         if (state !== 1) return;
@@ -340,17 +264,19 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const prevCurrent = lastCurrentRef.current;
         lastCurrentRef.current = current;
 
-        const jumpForward = current - prevCurrent > 1.5;
-        const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
-        if (jumpForward && aheadOfMax) {
-          p.seekTo(maxWatchedRef.current, true);
-          lastCurrentRef.current = maxWatchedRef.current;
-          const now = Date.now();
-          if (now - skipAlertCooldownRef.current > 2000) {
-            skipAlertCooldownRef.current = now;
-            alert("영상을 건너뛸 수 없습니다. 시청한 위치로 되돌립니다.");
+        if (preventSkip) {
+          const jumpForward = current - prevCurrent > 1.5;
+          const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
+          if (jumpForward && aheadOfMax) {
+            p.seekTo(maxWatchedRef.current, true);
+            lastCurrentRef.current = maxWatchedRef.current;
+            const now = Date.now();
+            if (now - skipAlertCooldownRef.current > 2000) {
+              skipAlertCooldownRef.current = now;
+              alert("영상을 건너뛸 수 없습니다. 시청한 위치로 되돌립니다.");
+            }
+            return;
           }
-          return;
         }
 
         if (current > maxWatchedRef.current) {
@@ -387,7 +313,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         progressIntervalRef.current = null;
       }
     };
-  }, [ready, assignmentId, saveProgress, showRateToast]);
+  }, [ready, assignmentId, saveProgress, preventSkip]);
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 

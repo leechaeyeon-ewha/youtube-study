@@ -28,6 +28,7 @@ interface AssignmentWithVideo {
   progress_percent: number;
   last_position: number;
   last_watched_at: string | null;
+  prevent_skip?: boolean;
   videos:
     | { id: string; title: string; video_id: string }
     | { id: string; title: string; video_id: string }[]
@@ -79,6 +80,7 @@ export default function AdminDashboardPage() {
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
+  const [skipToggleAssignmentId, setSkipToggleAssignmentId] = useState<string | null>(null);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export default function AdminDashboardPage() {
   const [libraryGroups, setLibraryGroups] = useState<LibraryCourseGroup[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [assignFromLibraryVideoId, setAssignFromLibraryVideoId] = useState<string | null>(null);
+  const [assignPlaylistCourseKey, setAssignPlaylistCourseKey] = useState<string | null>(null);
   const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
 
@@ -116,7 +119,7 @@ export default function AdminDashboardPage() {
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, prevent_skip, videos(id, title, video_id)")
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
@@ -335,6 +338,47 @@ export default function AdminDashboardPage() {
     }
   }
 
+  /** 재생목록 전체 할당: 해당 목록의 모든 영상을 선택한 학생에게 한 번에 배정 (이미 배정된 건 스킵) */
+  async function handleAssignPlaylistToStudent(courseKey: string, videoIds: string[]) {
+    if (!assignUserId || !supabase || videoIds.length === 0) return;
+    setAssignPlaylistCourseKey(courseKey);
+    setAssignMessage(null);
+    try {
+      let inserted = 0;
+      let skipped = 0;
+      for (const videoId of videoIds) {
+        const { error } = await supabase.from("assignments").insert({
+          user_id: assignUserId,
+          video_id: videoId,
+          is_completed: false,
+          progress_percent: 0,
+          last_position: 0,
+          is_visible: true,
+          is_weekly_assignment: false,
+        });
+        if (error) {
+          if (error.code === "23505") skipped += 1;
+          else throw new Error(error.message);
+        } else {
+          inserted += 1;
+        }
+      }
+      setAssignMessage({
+        type: "success",
+        text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
+      });
+      dashboardCache = null;
+      await load();
+    } catch (err: unknown) {
+      setAssignMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "재생목록 전체 할당에 실패했습니다.",
+      });
+    } finally {
+      setAssignPlaylistCourseKey(null);
+    }
+  }
+
   /** 재원생 → 퇴원 처리 (상태만 변경, 계정 유지) — 한 명만 대상 */
   async function handleWithdraw(userId: string, fullName: string) {
     const targetId = typeof userId === "string" ? userId.trim() : "";
@@ -438,6 +482,19 @@ export default function AdminDashboardPage() {
       load();
     } finally {
       setReportToggleUserId(null);
+    }
+  }
+
+  /** 영상별 스킵 방지 on/off */
+  async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean) {
+    if (!supabase) return;
+    setSkipToggleAssignmentId(assignmentId);
+    try {
+      await supabase.from("assignments").update({ prevent_skip: !currentPreventSkip }).eq("id", assignmentId);
+      dashboardCache = null;
+      await load();
+    } finally {
+      setSkipToggleAssignmentId(null);
     }
   }
 
@@ -870,16 +927,30 @@ export default function AdminDashboardPage() {
                                   const isExpanded = expandedLibraryCourseKey === courseKey;
                                   return (
                                     <li key={courseKey}>
-                                      <button
-                                        type="button"
-                                        onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
-                                        className="flex w-full items-center justify-between bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                      >
-                                        <span>{grp.courseTitle}</span>
-                                        <span className="text-slate-400 dark:text-slate-500">
-                                          {grp.filteredVideos.length}개 · {isExpanded ? "접기" : "펼치기"}
-                                        </span>
-                                      </button>
+                                      <div className="flex w-full items-center justify-between gap-2 bg-slate-50 px-3 py-2.5 dark:bg-zinc-700">
+                                        <button
+                                          type="button"
+                                          onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
+                                          className="flex flex-1 items-center justify-between text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                        >
+                                          <span>{grp.courseTitle}</span>
+                                          <span className="text-slate-400 dark:text-slate-500">
+                                            {grp.filteredVideos.length}개 · {isExpanded ? "접기" : "펼치기"}
+                                          </span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={assignPlaylistCourseKey === courseKey}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleAssignPlaylistToStudent(courseKey, grp.videos.map((v) => v.id));
+                                          }}
+                                          className="shrink-0 rounded bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                                        >
+                                          {assignPlaylistCourseKey === courseKey ? "할당 중…" : "재생목록 전체 할당"}
+                                        </button>
+                                      </div>
                                       {isExpanded && (
                                         <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
                                           {grp.filteredVideos.map((v) => (
@@ -949,19 +1020,21 @@ export default function AdminDashboardPage() {
                           <tr className="bg-slate-50 text-left text-slate-500 dark:bg-zinc-800 dark:text-slate-400">
                             <th className="px-4 py-2 pr-4">영상</th>
                             <th className="px-4 py-2 pr-4">진도율</th>
-                            <th className="px-4 py-2">마지막 시청</th>
+                            <th className="px-4 py-2 pr-4">마지막 시청</th>
+                            <th className="px-4 py-2">스킵 방지</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(assignmentsByUser[s.id] ?? []).length === 0 ? (
                             <tr>
-                              <td colSpan={3} className="px-4 py-4 text-slate-500 dark:text-slate-400">
+                              <td colSpan={4} className="px-4 py-4 text-slate-500 dark:text-slate-400">
                                 할당된 영상 없음
                               </td>
                             </tr>
                           ) : (
                             (assignmentsByUser[s.id] ?? []).map((a) => {
                               const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                              const preventSkip = a.prevent_skip !== false;
                               return (
                                 <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
                                   <td className="px-4 py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
@@ -974,6 +1047,30 @@ export default function AdminDashboardPage() {
                                   </td>
                                   <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
                                     {formatLastWatched(a.last_watched_at)}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <button
+                                      type="button"
+                                      disabled={skipToggleAssignmentId === a.id}
+                                      onClick={() => handleTogglePreventSkip(a.id, preventSkip)}
+                                      role="switch"
+                                      aria-checked={preventSkip}
+                                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+                                        preventSkip
+                                          ? "border-indigo-500 bg-indigo-600"
+                                          : "border-slate-300 bg-slate-200 dark:border-zinc-600 dark:bg-zinc-700"
+                                      }`}
+                                      title={preventSkip ? "스킵 방지 켜짐 (끄려면 클릭)" : "스킵 방지 꺼짐 (켜려면 클릭)"}
+                                    >
+                                      <span
+                                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                                          preventSkip ? "translate-x-5" : "translate-x-1"
+                                        }`}
+                                      />
+                                    </button>
+                                    <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                                      {preventSkip ? "켜짐" : "꺼짐"}
+                                    </span>
                                   </td>
                                 </tr>
                               );

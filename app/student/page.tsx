@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { getThumbnailUrl } from "@/lib/youtube";
+import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
 
 type Tab = "student" | "report";
+
+/** 재생목록(강좌) 또는 개별 보충 영상 폴더 */
+export interface PlaylistCard {
+  id: string; // "standalone" | course uuid
+  title: string;
+  videoCount: number;
+}
 
 interface AssignmentRow {
   id: string;
@@ -15,7 +22,13 @@ interface AssignmentRow {
   progress_percent: number;
   is_visible?: boolean;
   is_weekly_assignment?: boolean;
-  videos: { id: string; title: string; video_id: string } | null;
+  videos: {
+    id: string;
+    title: string;
+    video_id: string;
+    course_id?: string | null;
+    courses?: { id: string; title: string } | null;
+  } | null;
 }
 
 interface ReportData {
@@ -25,6 +38,38 @@ interface ReportData {
   monthlyCompletion?: number;
   recentVideos?: { title: string; is_completed: boolean; progress_percent: number; last_watched_at: string | null }[];
   comment?: string;
+}
+
+const STANDALONE_PLAYLIST_ID = "standalone";
+const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
+
+/** 할당 목록에서 재생목록 카드 목록 생성 (개별 보충 영상 최상단) */
+function buildPlaylistCards(assignments: AssignmentRow[]): PlaylistCard[] {
+  const byCourse = new Map<string, { title: string; count: number }>();
+  for (const a of assignments) {
+    const v = a.videos;
+    if (!v) continue;
+    const courseId = v.course_id ?? null;
+    const key = courseId ?? STANDALONE_PLAYLIST_ID;
+    const title =
+      key === STANDALONE_PLAYLIST_ID
+        ? STANDALONE_PLAYLIST_TITLE
+        : (v.courses && !Array.isArray(v.courses) ? (v.courses as { title: string }).title : null) ?? "기타";
+    if (!byCourse.has(key)) byCourse.set(key, { title, count: 0 });
+    const entry = byCourse.get(key)!;
+    entry.count += 1;
+  }
+  const cards: PlaylistCard[] = [];
+  byCourse.forEach((value, id) => {
+    cards.push({ id, title: value.title, videoCount: value.count });
+  });
+  // 개별 보충 영상이 있으면 최상단, 나머지는 제목순
+  cards.sort((a, b) => {
+    if (a.id === STANDALONE_PLAYLIST_ID) return -1;
+    if (b.id === STANDALONE_PLAYLIST_ID) return 1;
+    return a.title.localeCompare(b.title);
+  });
+  return cards;
 }
 
 function CircularProgress({ percent, label }: { percent: number; label: string }) {
@@ -116,6 +161,8 @@ export default function StudentPage() {
   const [error, setError] = useState<string | null>(null);
   const { showBanner, installPrompt, platform, installing, runInstall } = usePwaInstall();
   const [pwaDismissed, setPwaDismissed] = useState(false);
+  const isKakaoBrowser = useIsKakaoBrowser();
+  const playlists = useMemo(() => buildPlaylistCards(assignments), [assignments]);
 
   const [tab, setTab] = useState<Tab>("student");
   const [reportData, setReportData] = useState<ReportData | null>(null);
@@ -164,7 +211,7 @@ export default function StudentPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id)")
+        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id, course_id, courses(id, title))")
         .eq("user_id", user.id);
 
       if (fetchError) {
@@ -174,9 +221,8 @@ export default function StudentPage() {
       }
 
       const list = (data ?? []) as AssignmentRow[];
-      setAssignments(
-        list.filter((a) => a.is_visible !== false)
-      );
+      const visible = list.filter((a) => a.is_visible !== false);
+      setAssignments(visible);
       setLoading(false);
     }
 
@@ -222,6 +268,10 @@ export default function StudentPage() {
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4 dark:bg-zinc-950">
       <div className="mx-auto max-w-4xl">
+        {/* 카카오톡 인앱 브라우저: Chrome/Safari로 열기 유도 */}
+        <div className="mb-6">
+          <KakaoBrowserBanner />
+        </div>
         <header className="mb-8">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -252,7 +302,7 @@ export default function StudentPage() {
             안녕하세요, {fullName} 학생님
           </h1>
           <p className="mt-2 text-slate-600 dark:text-slate-400">
-            관리자가 할당한 영상 목록입니다. 클릭하면 시청 페이지로 이동합니다.
+            재생목록을 선택하면 해당 목록의 영상을 순서대로 볼 수 있습니다.
           </p>
 
           {/* 학생 보기 / 리포트(학부모 보기) 탭 — 같은 계정으로 역할에 따라 화면만 다르게 */}
@@ -453,7 +503,7 @@ export default function StudentPage() {
         {tab === "student" && (
           <>
         {/* PWA: 앱처럼 사용하기 / 홈 화면에 추가 안내 (학생용) */}
-        {showBanner && !pwaDismissed && (
+        {showBanner && !pwaDismissed && !isKakaoBrowser && (
           <div className="mb-6 rounded-2xl border border-teal-200 bg-teal-50/80 p-4 dark:border-teal-800 dark:bg-teal-900/20">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -512,59 +562,27 @@ export default function StudentPage() {
             </p>
           </div>
         ) : (
-          <ul className="space-y-3">
-            {assignments.map((a) => {
-              const video = a.videos;
-              if (!video) return null;
-              return (
-                <li key={a.id}>
-                  <Link
-                    href={`/watch/${a.id}`}
-                    className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
-                  >
-                    <div className="relative h-24 w-[160px] shrink-0 overflow-hidden rounded-xl bg-slate-200 dark:bg-zinc-800">
-                      <img
-                        src={getThumbnailUrl(video.video_id)}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      {a.is_completed && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/50">
-                          <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs font-medium text-white">
-                            완료
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="font-semibold text-slate-900 dark:text-white line-clamp-2">
-                        {video.title}
-                      </h2>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                        {a.is_weekly_assignment && (
-                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                            주간 과제
-                          </span>
-                        )}
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
-                          {a.is_completed ? "시청 완료" : `진도 ${(a.progress_percent ?? 0).toFixed(0)}%`}
-                        </p>
-                      </div>
-                    </div>
-                    <span
-                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                        a.is_completed
-                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                      }`}
-                    >
-                      {a.is_completed ? "완료" : "미완료"}
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {playlists.map((playlist) => (
+              <Link
+                key={playlist.id}
+                href={`/student/playlist/${encodeURIComponent(playlist.id)}`}
+                className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
+              >
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
+                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                </div>
+                <h2 className="font-semibold text-slate-900 dark:text-white line-clamp-2">
+                  {playlist.title}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  영상 {playlist.videoCount}개
+                </p>
+              </Link>
+            ))}
+          </div>
         )}
           </>
         )}
@@ -674,7 +692,7 @@ export default function StudentPage() {
         )}
 
         <footer className="mt-12 text-center text-sm text-slate-400">
-          © 학원 유튜브 학습 관리 시스템
+          © 영어는김현정 영어전문학원 | 영상학습 관리 시스템
         </footer>
       </div>
     </div>

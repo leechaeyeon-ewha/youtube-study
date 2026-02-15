@@ -17,6 +17,7 @@ interface AssignmentRow {
   is_completed: boolean;
   progress_percent?: number;
   last_position?: number;
+  prevent_skip?: boolean;
   videos: Video | null;
 }
 
@@ -50,7 +51,7 @@ export default function WatchPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, last_position, videos(id, title, video_id)")
+        .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
         .eq("id", assignmentId)
         .eq("user_id", user.id)
         .single();
@@ -110,6 +111,7 @@ export default function WatchPage() {
             videoId={video.video_id}
             assignmentId={assignment.id}
             initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
+            preventSkip={assignment.prevent_skip !== false}
           />
         </div>
         <div className="border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
@@ -117,6 +119,9 @@ export default function WatchPage() {
             {assignment.is_completed
               ? "완료된 영상입니다."
               : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 영상을 끝까지 시청하면 완료 처리됩니다.`}
+          </p>
+          <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+            재생 배속은 1배속으로만 적용됩니다. 전체화면은 플레이어 버튼을 사용하세요.
           </p>
         </div>
       </main>

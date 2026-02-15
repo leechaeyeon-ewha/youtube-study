@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import KakaoAutoRedirect from "@/components/KakaoAutoRedirect";
+import PwaServiceWorkerRegister from "@/components/PwaServiceWorkerRegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,11 +39,17 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <head>
-        <link rel="apple-touch-icon" href="/pwa-icon.png" />
+        {/* iOS: 앱 목록/홈 화면 아이콘 (기기별 최적 크기) */}
+        <link rel="apple-touch-icon" href="/pwa-icon.png" sizes="180x180" />
+        <link rel="apple-touch-icon" href="/pwa-icon.png" sizes="167x167" />
+        <link rel="apple-touch-icon" href="/pwa-icon.png" sizes="152x152" />
+        <link rel="apple-touch-icon" href="/pwa-icon.png" sizes="120x120" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <KakaoAutoRedirect />
+        <PwaServiceWorkerRegister />
         {children}
       </body>
     </html>
