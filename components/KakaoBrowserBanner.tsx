@@ -27,9 +27,11 @@ function getMobilePlatform(): "android" | "ios" | null {
   return null;
 }
 
+const KAKAO_REDIRECT_KEY = "kakao_redirect_attempted";
+
 /**
  * 카카오톡 인앱 브라우저에서 접속 시 표시.
- * Chrome/Safari로 열기 유도 (PWA 설치·쾌적한 이용을 위해).
+ * 자동 리다이렉트 시도 후에만 배너 표시해 깜빡임 방지.
  */
 export default function KakaoBrowserBanner() {
   const [show, setShow] = useState(false);
@@ -38,8 +40,19 @@ export default function KakaoBrowserBanner() {
 
   useEffect(() => {
     if (!getIsKakaoBrowser()) return;
-    setShow(true);
-    setPlatform(getMobilePlatform());
+    const alreadyTriedRedirect = (() => {
+      try {
+        return sessionStorage.getItem(KAKAO_REDIRECT_KEY) === "1";
+      } catch {
+        return false;
+      }
+    })();
+    const delayMs = alreadyTriedRedirect ? 0 : 600;
+    const t = setTimeout(() => {
+      setShow(true);
+      setPlatform(getMobilePlatform());
+    }, delayMs);
+    return () => clearTimeout(t);
   }, []);
 
   const openInChrome = () => {
