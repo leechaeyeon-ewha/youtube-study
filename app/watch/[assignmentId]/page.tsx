@@ -92,7 +92,7 @@ export default function WatchPage() {
   const video = assignment.videos;
 
   return (
-    <div className="watch-page-landscape flex min-h-screen flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
+    <div className="watch-page-landscape flex min-h-[100dvh] flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
       <header className="watch-header mb-6 w-full max-w-4xl mx-auto">
         <Link
           href="/student"
