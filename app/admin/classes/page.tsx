@@ -70,6 +70,10 @@ export default function AdminClassesPage() {
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
   /** 반 카드 클릭 시 해당 반 학생 목록 표시 */
   const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
+  /** 반에 학생 추가: 선택한 학생 ID 목록 */
+  const [addToClassSelectedIds, setAddToClassSelectedIds] = useState<string[]>([]);
+  const [addToClassLoading, setAddToClassLoading] = useState(false);
+  const [addToClassMessage, setAddToClassMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   async function load() {
     if (!supabase) {
@@ -275,6 +279,33 @@ export default function AdminClassesPage() {
     );
   }
 
+  function toggleAddToClassStudent(studentId: string) {
+    setAddToClassSelectedIds((prev) =>
+      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId]
+    );
+  }
+
+  async function handleAddStudentsToClass(classId: string) {
+    if (!supabase || addToClassSelectedIds.length === 0) return;
+    setAddToClassLoading(true);
+    setAddToClassMessage(null);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ class_id: classId })
+        .in("id", addToClassSelectedIds);
+      if (error) throw error;
+      const className = classes.find((c) => c.id === classId)?.title ?? "반";
+      setAddToClassMessage({ type: "success", text: `${addToClassSelectedIds.length}명을 ${className}에 추가했습니다.` });
+      setAddToClassSelectedIds([]);
+      load();
+    } catch (err: unknown) {
+      setAddToClassMessage({ type: "error", text: err instanceof Error ? err.message : "추가 실패" });
+    } finally {
+      setAddToClassLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-10">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">반 관리</h1>
@@ -283,7 +314,7 @@ export default function AdminClassesPage() {
       {classes.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">반별 평균 진도율</h2>
-          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">반을 클릭하면 해당 반에 속한 학생을 볼 수 있습니다.</p>
+          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">반을 클릭하면 해당 반에 속한 학생을 보고, 여러 학생을 선택해 한 번에 반에 추가할 수 있습니다.</p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {classes.map((c) => {
               const classStudents = students.filter((s) => s.class_id === c.id);
@@ -295,7 +326,13 @@ export default function AdminClassesPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => setExpandedClassId(isExpanded ? null : c.id)}
+                    onClick={() => {
+                      setExpandedClassId(isExpanded ? null : c.id);
+                      if (!isExpanded) {
+                        setAddToClassSelectedIds([]);
+                        setAddToClassMessage(null);
+                      }
+                    }}
                     className="w-full p-4 text-left hover:bg-slate-100/80 dark:hover:bg-zinc-700/50"
                   >
                     <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{c.title}</p>
@@ -316,6 +353,50 @@ export default function AdminClassesPage() {
                           ))}
                         </ul>
                       )}
+
+                      <div className="mt-4 border-t border-slate-200 pt-3 dark:border-zinc-700">
+                        <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">이 반에 학생 추가</p>
+                        {(() => {
+                          const notInClass = students.filter((s) => s.class_id !== c.id);
+                          if (notInClass.length === 0) {
+                            return <p className="text-sm text-slate-500 dark:text-slate-400">추가할 수 있는 학생이 없습니다. (모든 학생이 이미 이 반에 있거나 다른 반에 소속되어 있습니다)</p>;
+                          }
+                          return (
+                            <>
+                              <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">추가할 학생을 선택한 뒤 버튼을 누르세요.</p>
+                              <ul className="mb-3 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-800/50">
+                                {notInClass.map((s) => (
+                                  <li key={s.id} className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      id={`add-${c.id}-${s.id}`}
+                                      checked={addToClassSelectedIds.includes(s.id)}
+                                      onChange={() => toggleAddToClassStudent(s.id)}
+                                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-700"
+                                    />
+                                    <label htmlFor={`add-${c.id}-${s.id}`} className="cursor-pointer text-sm text-slate-800 dark:text-slate-200">
+                                      {s.full_name || s.email || s.id.slice(0, 8)}
+                                    </label>
+                                  </li>
+                                ))}
+                              </ul>
+                              {addToClassMessage && (
+                                <p className={`mb-2 text-sm ${addToClassMessage.type === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                                  {addToClassMessage.text}
+                                </p>
+                              )}
+                              <button
+                                type="button"
+                                disabled={addToClassLoading || addToClassSelectedIds.length === 0}
+                                onClick={() => handleAddStudentsToClass(c.id)}
+                                className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                              >
+                                {addToClassLoading ? "추가 중..." : `선택한 ${addToClassSelectedIds.length}명 반에 추가`}
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
                   )}
                 </div>
