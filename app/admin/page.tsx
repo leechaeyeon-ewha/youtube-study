@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { extractYoutubeVideoId } from "@/lib/youtube";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Profile {
   id: string;
@@ -66,6 +67,7 @@ let dashboardCache: {
 } | null = null;
 
 export default function AdminDashboardPage() {
+  const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
   const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, AssignmentWithVideo[]>>({});
   const [loading, setLoading] = useState(true);
@@ -100,7 +102,10 @@ export default function AdminDashboardPage() {
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
 
   async function load() {
-    if (!supabase) return;
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
 
     const now = Date.now();
     const useCache = dashboardCache && now - dashboardCache.at < DASHBOARD_CACHE_TTL_MS;
@@ -160,8 +165,14 @@ export default function AdminDashboardPage() {
   }
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     load();
   }, []);
+
+  if (!mounted) return null;
 
   async function handleAddStudent(e: React.FormEvent) {
     e.preventDefault();
@@ -578,7 +589,15 @@ export default function AdminDashboardPage() {
   if (loading) {
     return (
       <div className="flex justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!supabase) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
       </div>
     );
   }

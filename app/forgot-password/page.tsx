@@ -1,13 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function ForgotPasswordPage() {
+  const [mounted, setMounted] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,14 +35,14 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ full_name: fullName.trim(), email: email.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "재설정 요청에 실패했습니다.");
-      if (data.success && data.message) {
+      if (!res.ok) throw new Error(data?.error || "재설정 요청에 실패했습니다.");
+      if (data?.success && data?.message) {
         setMessage({ type: "success", text: data.message });
         setFullName("");
         setEmail("");
         return;
       }
-      throw new Error(data.error || "재설정 요청에 실패했습니다.");
+      throw new Error(data?.error || "재설정 요청에 실패했습니다.");
     } catch (err: unknown) {
       setMessage({
         type: "error",

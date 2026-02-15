@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { getThumbnailUrl } from "@/lib/youtube";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 const STANDALONE_PLAYLIST_ID = "standalone";
 const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
@@ -28,10 +29,15 @@ export default function StudentPlaylistPage() {
   const params = useParams();
   const router = useRouter();
   const playlistId = (params?.id as string) ?? "";
+  const [mounted, setMounted] = useState(false);
   const [title, setTitle] = useState<string>("");
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!playlistId) {
@@ -55,15 +61,20 @@ export default function StudentPlaylistPage() {
       const { data, error: fetchError } = await supabase
         .from("assignments")
         .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id, course_id, courses(id, title))")
-        .eq("user_id", user.id);
+        .eq("user_id", user?.id ?? "");
 
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
         return;
       }
+      if (data == null) {
+        setError("데이터를 불러오지 못했습니다.");
+        setLoading(false);
+        return;
+      }
 
-      const list = (data ?? []) as AssignmentRow[];
+      const list = data as AssignmentRow[];
       const visible = list.filter((a) => a.is_visible !== false);
 
       const isStandalone = playlistId === STANDALONE_PLAYLIST_ID;
@@ -93,12 +104,14 @@ export default function StudentPlaylistPage() {
     }
 
     load();
-  }, [playlistId, router]);
+  }, [playlistId]);
+
+  if (!mounted) return null;
 
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <LoadingSpinner />
       </div>
     );
   }

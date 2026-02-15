@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Video } from "@/lib/types";
 import type { Profile } from "@/lib/types";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface AssignmentRow {
   id: string;
@@ -29,6 +30,7 @@ let assignPageCache: {
 } | null = null;
 
 export default function AdminAssignPage() {
+  const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
@@ -43,7 +45,10 @@ export default function AdminAssignPage() {
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
 
   async function load() {
-    if (!supabase) return;
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     const now = Date.now();
     if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
       setStudents(assignPageCache.students);
@@ -70,8 +75,30 @@ export default function AdminAssignPage() {
   }
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     load();
   }, []);
+
+  if (!mounted) return null;
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!supabase) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   async function handleAssign(e: React.FormEvent) {
     e.preventDefault();

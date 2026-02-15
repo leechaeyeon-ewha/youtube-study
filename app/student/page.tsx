@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 type Tab = "student" | "report";
 
@@ -154,6 +155,7 @@ function usePwaInstall() {
 
 export default function StudentPage() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [fullName, setFullName] = useState<string | null>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
@@ -178,6 +180,10 @@ export default function StudentPage() {
   const [emailInput, setEmailInput] = useState("");
   const [emailMessage, setEmailMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [emailLoading, setEmailLoading] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -225,8 +231,13 @@ export default function StudentPage() {
         setLoading(false);
         return;
       }
+      if (data == null) {
+        setError("데이터를 불러오지 못했습니다.");
+        setLoading(false);
+        return;
+      }
 
-      const list = (data ?? []) as AssignmentRow[];
+      const list = data as AssignmentRow[];
       const visible = list.filter((a) => a.is_visible !== false);
       setAssignments(visible);
       setLoading(false);
@@ -257,10 +268,12 @@ export default function StudentPage() {
     });
   }, [tab]);
 
+  if (!mounted) return null;
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <LoadingSpinner />
       </div>
     );
   }

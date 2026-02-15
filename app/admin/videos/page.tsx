@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
 import type { Video } from "@/lib/types";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface VideoWithCourse extends Video {
   sort_order?: number;
@@ -35,6 +36,7 @@ const VIDEOS_CACHE_TTL_MS = 30 * 1000;
 let videosPageCache: { courseGroups: CourseGroup[]; at: number } | null = null;
 
 export default function AdminVideosPage() {
+  const [mounted, setMounted] = useState(false);
   const [courseGroups, setCourseGroups] = useState<CourseGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [urlInput, setUrlInput] = useState("");
@@ -74,7 +76,10 @@ export default function AdminVideosPage() {
   const [reorderLoading, setReorderLoading] = useState<string | null>(null);
 
   async function loadVideos() {
-    if (!supabase) return;
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     const now = Date.now();
     if (videosPageCache && now - videosPageCache.at < VIDEOS_CACHE_TTL_MS) {
       setCourseGroups(videosPageCache.courseGroups);
@@ -130,12 +135,34 @@ export default function AdminVideosPage() {
   }
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     loadVideos();
   }, []);
 
   useEffect(() => {
     if (assignModalOpen || settingsModalOpen) loadStudentsAndClasses();
   }, [assignModalOpen, settingsModalOpen]);
+
+  if (!mounted) return null;
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!supabase) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   const allVideos = courseGroups.flatMap((g) => g.videos);
   const playlistGroups = courseGroups.filter((g) => g.courseId !== null);

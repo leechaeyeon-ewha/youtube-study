@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import YoutubePlayer from "@/components/YoutubePlayer";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Video {
   id: string;
@@ -26,9 +27,14 @@ export default function WatchPage() {
   const router = useRouter();
   const assignmentId = params?.assignmentId as string | undefined;
 
+  const [mounted, setMounted] = useState(false);
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!assignmentId) {
@@ -56,7 +62,7 @@ export default function WatchPage() {
         .from("assignments")
         .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
         .eq("id", assignmentId)
-        .eq("user_id", user.id)
+        .eq("user_id", user?.id ?? "")
         .single();
 
       if (cancelled) return;
@@ -74,10 +80,12 @@ export default function WatchPage() {
     return () => { cancelled = true; };
   }, [assignmentId]);
 
+  if (!mounted) return null;
+
   if (loading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-zinc-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+        <LoadingSpinner />
         <p className="mt-4 text-sm text-zinc-500">불러오는 중...</p>
       </div>
     );

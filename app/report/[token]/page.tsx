@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface ReportData {
   allowed: boolean;
@@ -50,8 +51,13 @@ function CircularProgress({ percent, label }: { percent: number; label: string }
 export default function ReportPage() {
   const params = useParams();
   const token = params?.token as string | undefined;
+  const [mounted, setMounted] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -68,15 +74,25 @@ export default function ReportPage() {
       .finally(() => setLoading(false));
   }, [token]);
 
+  if (!mounted) return null;
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <LoadingSpinner />
       </div>
     );
   }
 
-  if (!data?.allowed) {
+  if (!data) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!data.allowed) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-lg dark:border-zinc-800 dark:bg-zinc-900">

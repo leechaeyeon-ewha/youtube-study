@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getThumbnailUrl } from "@/lib/youtube";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Profile {
   id: string;
@@ -48,6 +49,7 @@ let classesPageCache: {
 } | null = null;
 
 export default function AdminClassesPage() {
+  const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<Profile[]>([]);
@@ -68,7 +70,10 @@ export default function AdminClassesPage() {
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
 
   async function load() {
-    if (!supabase) return;
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     const now = Date.now();
     if (classesPageCache && now - classesPageCache.at < CLASSES_CACHE_TTL_MS) {
       setStudents(classesPageCache.students);
@@ -162,8 +167,30 @@ export default function AdminClassesPage() {
   }
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     load();
   }, []);
+
+  if (!mounted) return null;
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!supabase) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   const playlistGroups = courseGroups.filter((g) => g.courseId !== null);
   const allVideos = courseGroups.flatMap((g) => g.videos);

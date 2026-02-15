@@ -11,6 +11,7 @@ type FormMode = "admin" | "student";
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [mounted, setMounted] = useState(false);
   const [who, setWho] = useState<Who>(null);
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
@@ -19,6 +20,11 @@ function LoginPageContent() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const err = searchParams.get("error");
     if (err === "no_profile") {
       setMessage({
@@ -27,8 +33,9 @@ function LoginPageContent() {
       });
       window.history.replaceState({}, "", "/login");
     }
-    // searchParams를 의존성에 넣지 않음: 넣으면 참조 변경 시 effect 재실행 → setMessage → 리렌더 → 무한 루프 가능.
   }, []);
+
+  if (!mounted) return null;
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,8 +49,8 @@ function LoginPageContent() {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       // 세션이 저장된 뒤 이동하도록 전체 페이지 이동 사용 (그렇지 않으면 /api/auth/me가 세션 못 읽음)
-      if (data.session) {
-        window.location.href = "/admin";
+      if (data?.session) {
+        if (typeof window !== "undefined") window.location.href = "/admin";
         return;
       }
       router.replace("/admin");
@@ -76,12 +83,12 @@ function LoginPageContent() {
       if (!res.ok) throw new Error(data.error || "학생 정보를 찾을 수 없습니다.");
 
       const { data: signInData, error } = await supabase.auth.signInWithPassword({
-        email: data.email,
+        email: data?.email ?? "",
         password,
       });
       if (error) throw error;
-      if (signInData.session) {
-        window.location.href = "/student";
+      if (signInData?.session) {
+        if (typeof window !== "undefined") window.location.href = "/student";
         return;
       }
       router.replace("/student");

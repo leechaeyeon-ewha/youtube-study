@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function Home() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -42,6 +48,8 @@ export default function Home() {
     // 마운트 시 한 번만 실행. router는 안정 참조이지만 의존성에 넣으면 재실행으로 인한 루프 가능성 방지.
   }, []);
 
+  if (!mounted) return null;
+
   if (!supabase) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
@@ -54,7 +62,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+      <LoadingSpinner />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/types";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function AdminLayout({
   children,
@@ -13,9 +14,14 @@ export default function AdminLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -47,7 +53,7 @@ export default function AdminLayout({
         router.replace(msg ? `/login?error=${msg}` : "/");
         return;
       }
-      const profileData = await res.json();
+      const profileData = (await res.json()) as { role?: string } | null;
       if (cancelled) return;
       if (profileData?.role !== "admin") {
         setLoading(false);
@@ -62,15 +68,25 @@ export default function AdminLayout({
     // 마운트 시 한 번만 실행. 의존성에 router 넣으면 재실행으로 루프 가능성 있음.
   }, []);
 
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
+
+  if (!mounted) return null;
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+        <LoadingSpinner />
       </div>
     );
   }
 
-  if (!profile) return null;
+  if (!profile) return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
+      <LoadingSpinner />
+    </div>
+  );
 
   const nav = [
     { href: "/admin", label: "대시보드" },
@@ -78,10 +94,6 @@ export default function AdminLayout({
     { href: "/admin/classes", label: "반 관리" },
     { href: "/admin/assign", label: "배정 목록" },
   ];
-
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [pathname]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950">

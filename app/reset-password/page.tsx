@@ -8,12 +8,17 @@ import { supabase } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -33,6 +38,8 @@ export default function ResetPasswordPage() {
     const subscription = authStateData?.subscription;
     return () => subscription?.unsubscribe();
   }, []);
+
+  if (!mounted) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

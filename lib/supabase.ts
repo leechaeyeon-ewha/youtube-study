@@ -3,8 +3,12 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-// 빌드 시 타입 오류를 피하기 위해 any로 고정 캐스팅
-// (실행 시에는 URL/KEY가 없으면 null일 수 있으므로, 사용하는 쪽에서 런타임 체크는 유지하는 것이 안전합니다.)
+if (typeof window !== "undefined" && (!supabaseUrl || !supabaseAnonKey)) {
+  console.warn(
+    "[Supabase] NEXT_PUBLIC_SUPABASE_URL 또는 NEXT_PUBLIC_SUPABASE_ANON_KEY가 비어 있습니다. 환경 변수를 확인해 주세요."
+  );
+}
+
 const supabaseInstance: SupabaseClient | null =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey)
