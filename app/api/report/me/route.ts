@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 /** 로그인한 학생 본인 리포트 (학생·학부모 동일 계정 시 학부모 보기용) */
 export async function GET(req: Request) {
@@ -12,12 +13,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ allowed: false }, { status: 401 });
   }
 
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const userResult = await supabase.auth.getUser(token);
+  const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey);
+  const userResult = await supabaseAnon.auth.getUser(token);
   const user = userResult?.data?.user ?? null;
   if (userResult?.error || !user) {
     return NextResponse.json({ allowed: false }, { status: 401 });
   }
+
+  const supabase = serviceRoleKey
+    ? createClient(supabaseUrl, serviceRoleKey)
+    : supabaseAnon;
 
   const profileResult = await supabase
     .from("profiles")
