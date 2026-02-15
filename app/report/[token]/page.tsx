@@ -140,7 +140,7 @@ export default function ReportPage() {
                     {v.title}
                   </span>
                   <span className="shrink-0 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    진도 {typeof v.progress_percent === "number" ? v.progress_percent.toFixed(1) : "0"}%
+                    진도 {(Number.isFinite(Number(v.progress_percent)) ? Number(v.progress_percent).toFixed(1) : "0")}%
                   </span>
                   <span
                     className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${

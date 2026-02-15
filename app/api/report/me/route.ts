@@ -71,7 +71,13 @@ export async function GET(req: Request) {
     inMonth.length === 0 ? 0 : Math.round((inMonth.filter((a) => a.is_completed).length / inMonth.length) * 100);
 
   const safePercent = (p: unknown): number => {
-    const n = typeof p === "number" && Number.isFinite(p) ? p : 0;
+    let n = 0;
+    if (typeof p === "number" && Number.isFinite(p)) {
+      n = p;
+    } else if (typeof p === "string") {
+      const parsed = parseFloat(p);
+      n = Number.isFinite(parsed) ? parsed : 0;
+    }
     return n >= 0 && n <= 100 ? n : 0;
   };
   const recentVideos = inWeek
