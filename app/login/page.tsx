@@ -27,7 +27,8 @@ function LoginPageContent() {
       });
       window.history.replaceState({}, "", "/login");
     }
-  }, [searchParams]);
+    // searchParams를 의존성에 넣지 않음: 넣으면 참조 변경 시 effect 재실행 → setMessage → 리렌더 → 무한 루프 가능.
+  }, []);
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

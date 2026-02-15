@@ -22,6 +22,7 @@ export default function AdminLayout({
       setLoading(false);
       return;
     }
+    let cancelled = false;
     async function check() {
       const client = supabase;
       if (!client) {
@@ -29,31 +30,37 @@ export default function AdminLayout({
         return;
       }
       const { data: { session } } = await client.auth.getSession();
+      if (cancelled) return;
       if (!session?.access_token) {
+        setLoading(false);
         router.replace("/login");
         return;
       }
       const res = await fetch("/api/auth/me", {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      if (cancelled) return;
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const msg = err?.error?.includes("프로필") ? "no_profile" : "";
-        router.replace(msg ? `/login?error=${msg}` : "/");
         setLoading(false);
+        router.replace(msg ? `/login?error=${msg}` : "/");
         return;
       }
       const profileData = await res.json();
+      if (cancelled) return;
       if (profileData?.role !== "admin") {
-        router.replace("/");
         setLoading(false);
+        router.replace("/");
         return;
       }
       setProfile(profileData as Profile);
       setLoading(false);
     }
     check();
-  }, [router]);
+    return () => { cancelled = true; };
+    // 마운트 시 한 번만 실행. 의존성에 router 넣으면 재실행으로 루프 가능성 있음.
+  }, []);
 
   if (loading) {
     return (

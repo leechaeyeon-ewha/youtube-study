@@ -186,9 +186,12 @@ export default function StudentPage() {
       return;
     }
 
+    let cancelled = false;
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
+      if (cancelled) return;
       if (!user) {
+        setLoading(false);
         router.replace("/login");
         return;
       }
@@ -199,7 +202,9 @@ export default function StudentPage() {
         .eq("id", user.id)
         .single();
 
+      if (cancelled) return;
       if (profile?.role === "admin") {
+        setLoading(false);
         router.replace("/admin");
         return;
       }
@@ -214,6 +219,7 @@ export default function StudentPage() {
         .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id, course_id, courses(id, title))")
         .eq("user_id", user.id);
 
+      if (cancelled) return;
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
@@ -227,7 +233,9 @@ export default function StudentPage() {
     }
 
     load();
-  }, [router]);
+    return () => { cancelled = true; };
+    // 마운트 시 한 번만 실행. router 의존 시 재실행으로 루프 가능성 있음.
+  }, []);
 
   useEffect(() => {
     if (tab !== "report" || !supabase) return;

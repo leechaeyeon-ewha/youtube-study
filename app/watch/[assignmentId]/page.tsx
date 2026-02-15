@@ -42,9 +42,12 @@ export default function WatchPage() {
       return;
     }
 
+    let cancelled = false;
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
+      if (cancelled) return;
       if (!user) {
+        setLoading(false);
         router.replace("/login");
         return;
       }
@@ -56,6 +59,7 @@ export default function WatchPage() {
         .eq("user_id", user.id)
         .single();
 
+      if (cancelled) return;
       if (fetchError || !data) {
         setError(fetchError?.message ?? "과제를 찾을 수 없습니다.");
         setLoading(false);
@@ -67,7 +71,8 @@ export default function WatchPage() {
     }
 
     load();
-  }, [assignmentId, router]);
+    return () => { cancelled = true; };
+  }, [assignmentId]);
 
   if (loading) {
     return (
