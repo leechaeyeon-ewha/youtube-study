@@ -4,12 +4,12 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 
 const SKIP_TOLERANCE_SEC = 0.5;
-const LOCKED_PLAYBACK_RATE = 1;
+const MAX_PLAYBACK_RATE = 1.4;
 const COMPLETE_THRESHOLD = 0.95;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 /** 배속 체크 주기: 너무 짧으면 오류·깜빡임 유발 가능 → 1초로 완화 */
 const RATE_CHECK_INTERVAL_MS = 1000;
-const RATE_TOAST_MESSAGE = "배속 변경은 허용되지 않습니다. 1배속만 사용 가능합니다.";
+const RATE_TOAST_MESSAGE = "배속은 1.4배속까지만 사용 가능합니다.";
 const TOAST_DURATION_MS = 2500;
 const TOAST_COOLDOWN_MS = 8000;
 
@@ -176,8 +176,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
               try {
                 const p = playerRef.current;
                 const r = p.getPlaybackRate();
-                if (typeof r !== "number" || !Number.isFinite(r) || r !== LOCKED_PLAYBACK_RATE) {
-                  p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
+                if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
+                  p.setPlaybackRate(MAX_PLAYBACK_RATE);
                 }
               } catch {
                 // ignore
@@ -217,7 +217,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, []);
 
-  /** 배속 1x 고정: 단일 인터벌로만 체크. 와이드 뷰/가로 모드에서도 레이아웃과 무관하게 계속 동작함. */
+  /** 배속 1.4x 초과 시 막기: 단일 인터벌로 체크. 와이드 뷰/가로 모드에서도 레이아웃과 무관하게 동작함. */
   useEffect(() => {
     if (!ready) return;
 
@@ -226,9 +226,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const p = playerRef.current;
         if (!p) return;
         const rate = p.getPlaybackRate();
-        if (typeof rate !== "number" || !Number.isFinite(rate) || rate !== LOCKED_PLAYBACK_RATE) {
-          lastKnownRateRef.current = LOCKED_PLAYBACK_RATE;
-          p.setPlaybackRate(LOCKED_PLAYBACK_RATE);
+        if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
+          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
+          p.setPlaybackRate(MAX_PLAYBACK_RATE);
           showRateToast();
         } else {
           lastKnownRateRef.current = rate;
