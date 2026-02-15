@@ -62,11 +62,6 @@ export default function KakaoBrowserBanner() {
     window.location.href = intentUrl;
   };
 
-  /** Safari로 열기 시도. 카카오 인앱에서는 대부분 Safari로 넘어가지 않고 같은 화면에 머무름 → iOS는 주소 복사 안내가 유일하게 확실한 방법 */
-  const openInSafari = () => {
-    window.open(window.location.href, "_blank", "noopener,noreferrer");
-  };
-
   const copyUrl = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -103,22 +98,13 @@ export default function KakaoBrowserBanner() {
           </button>
         )}
         {platform === "ios" && (
-          <>
-            <button
-              type="button"
-              onClick={copyUrl}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600"
-            >
-              {copied ? "주소 복사됨" : "주소 복사 (Safari에 붙여넣기)"}
-            </button>
-            <button
-              type="button"
-              onClick={openInSafari}
-              className="rounded-lg border border-amber-600 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-500 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-900/30"
-            >
-              Safari로 열기 시도
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={copyUrl}
+            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600"
+          >
+            {copied ? "복사됨" : "주소 복사"}
+          </button>
         )}
         {platform !== "android" && platform !== "ios" && (
           <a
