@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
@@ -170,6 +170,7 @@ export default function StudentPage() {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const reportContentRef = useRef<HTMLDivElement>(null);
 
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
@@ -252,6 +253,7 @@ export default function StudentPage() {
     if (tab !== "report" || !supabase) return;
     setReportLoading(true);
     setReportError(null);
+    setReportData(null);
     supabase.auth.getSession().then((res: { data?: { session?: Session | null } }) => {
       const session: Session | null = res?.data?.session ?? null;
       const token = session?.access_token;
@@ -261,12 +263,29 @@ export default function StudentPage() {
         return;
       }
       fetch("/api/report/me", { headers: { Authorization: `Bearer ${token}` } })
-        .then((res) => res.json())
-        .then((json: ReportData) => setReportData(json))
-        .catch(() => setReportError("리포트를 불러오지 못했습니다."))
+        .then(async (res) => {
+          const json = (await res.json()) as ReportData & { error?: string };
+          if (!res.ok) {
+            setReportError(json?.error ?? "리포트를 불러오지 못했습니다.");
+            setReportData({ allowed: false });
+            return;
+          }
+          setReportData(json);
+          setReportError(null);
+        })
+        .catch(() => {
+          setReportError("리포트를 불러오지 못했습니다.");
+          setReportData(null);
+        })
         .finally(() => setReportLoading(false));
     });
   }, [tab]);
+
+  useEffect(() => {
+    if (tab === "report" && reportData?.allowed && reportContentRef.current) {
+      reportContentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [tab, reportData?.allowed]);
 
   if (!mounted) return null;
 
@@ -628,7 +647,7 @@ export default function StudentPage() {
               </div>
             )}
             {!reportLoading && !reportError && reportData?.allowed && (
-              <div className="space-y-8">
+              <div ref={reportContentRef} id="report-content" className="scroll-mt-4 space-y-8">
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                   <h2 className="mb-2 text-center text-sm font-medium text-slate-500 dark:text-slate-400">
                     과제 이수율
@@ -642,8 +661,8 @@ export default function StudentPage() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                  <h2 className="mb-1 text-base font-semibold text-slate-800 dark:text-white">
+                <section className="min-h-[200px] rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900" aria-labelledby="report-learning-history-heading">
+                  <h2 id="report-learning-history-heading" className="mb-1 text-base font-semibold text-slate-800 dark:text-white">
                     학습 이력 (최근 7일)
                   </h2>
                   <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
@@ -654,7 +673,7 @@ export default function StudentPage() {
                       최근 시청한 영상이 없습니다.
                     </p>
                   ) : (
-                    <ul className="space-y-3">
+                    <ul className="space-y-3" role="list">
                       {(reportData.recentVideos ?? []).map((v, i) => (
                         <li
                           key={i}

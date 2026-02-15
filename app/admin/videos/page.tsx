@@ -120,6 +120,7 @@ export default function AdminVideosPage() {
     const res = await supabase
       .from("videos")
       .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, sort_order, created_at, courses(id, title, sort_order)")
+      .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
     data = res.data as VideoWithCourse[] | null;
     error = res.error;
@@ -317,49 +318,81 @@ export default function AdminVideosPage() {
     }
   }
 
-  /** 재생목록(강좌) 순서: 위로 */
+  /** 재생목록(강좌) 순서: 위로 — 낙관적 업데이트 후 Supabase(courses) 동기화 */
   async function moveCourseUp(groupIndex: number) {
     if (!supabase || groupIndex <= 0) return;
     const groups = filteredPlaylistGroups;
     const prev = groups[groupIndex - 1];
     const curr = groups[groupIndex];
     if (!prev?.courseId || !curr?.courseId) return;
+    const prevOrder = prev.courseSortOrder;
+    const currOrder = curr.courseSortOrder;
+
     setReorderLoading(`course-${curr.courseId}`);
     videosPageCache = null;
+
+    const previousGroups = courseGroups;
+    setCourseGroups((prevGroups) => {
+      const prevIdx = prevGroups.findIndex((g) => g.courseId === prev.courseId);
+      const currIdx = prevGroups.findIndex((g) => g.courseId === curr.courseId);
+      if (prevIdx === -1 || currIdx === -1) return prevGroups;
+      const next = [...prevGroups];
+      [next[prevIdx], next[currIdx]] = [next[currIdx], next[prevIdx]];
+      return next;
+    });
+
     try {
-      const [prevOrder, currOrder] = [prev.courseSortOrder, curr.courseSortOrder];
-      await Promise.all([
+      const [prevRes, currRes] = await Promise.all([
         supabase.from("courses").update({ sort_order: currOrder }).eq("id", prev.courseId),
         supabase.from("courses").update({ sort_order: prevOrder }).eq("id", curr.courseId),
       ]);
-      await loadVideos();
+      if (prevRes.error || currRes.error) {
+        setCourseGroups(previousGroups);
+        await loadVideos();
+      }
     } finally {
       setReorderLoading(null);
     }
   }
 
-  /** 재생목록(강좌) 순서: 아래로 */
+  /** 재생목록(강좌) 순서: 아래로 — 낙관적 업데이트 후 Supabase(courses) 동기화 */
   async function moveCourseDown(groupIndex: number) {
     if (!supabase || groupIndex >= filteredPlaylistGroups.length - 1) return;
     const groups = filteredPlaylistGroups;
     const curr = groups[groupIndex];
     const next = groups[groupIndex + 1];
     if (!curr?.courseId || !next?.courseId) return;
+    const currOrder = curr.courseSortOrder;
+    const nextOrder = next.courseSortOrder;
+
     setReorderLoading(`course-${curr.courseId}`);
     videosPageCache = null;
+
+    const previousGroups = courseGroups;
+    setCourseGroups((prevGroups) => {
+      const currIdx = prevGroups.findIndex((g) => g.courseId === curr.courseId);
+      const nextIdx = prevGroups.findIndex((g) => g.courseId === next.courseId);
+      if (currIdx === -1 || nextIdx === -1) return prevGroups;
+      const nextArr = [...prevGroups];
+      [nextArr[currIdx], nextArr[nextIdx]] = [nextArr[nextIdx], nextArr[currIdx]];
+      return nextArr;
+    });
+
     try {
-      const [currOrder, nextOrder] = [curr.courseSortOrder, next.courseSortOrder];
-      await Promise.all([
+      const [currRes, nextRes] = await Promise.all([
         supabase.from("courses").update({ sort_order: nextOrder }).eq("id", curr.courseId),
         supabase.from("courses").update({ sort_order: currOrder }).eq("id", next.courseId),
       ]);
-      await loadVideos();
+      if (currRes.error || nextRes.error) {
+        setCourseGroups(previousGroups);
+        await loadVideos();
+      }
     } finally {
       setReorderLoading(null);
     }
   }
 
-  /** 영상 순서: 위로 (같은 강좌 내 또는 기타 영상 목록 내) */
+  /** 영상 순서: 위로 (같은 강좌 내 또는 기타 영상 목록 내) — 낙관적 업데이트 후 Supabase 동기화 */
   async function moveVideoUp(courseId: string | null, videoIndex: number) {
     if (!supabase || videoIndex <= 0) return;
     const group = courseGroups.find((g) => g.courseId === courseId);
@@ -369,19 +402,34 @@ export default function AdminVideosPage() {
     if (!prev || !curr) return;
     setReorderLoading(`video-${curr.id}`);
     videosPageCache = null;
+
+    const previousGroups = courseGroups;
+    setCourseGroups((prevGroups) => {
+      const gIdx = prevGroups.findIndex((g) => g.courseId === courseId);
+      if (gIdx === -1) return prevGroups;
+      const nextVideos = [...prevGroups[gIdx].videos];
+      [nextVideos[videoIndex - 1], nextVideos[videoIndex]] = [nextVideos[videoIndex], nextVideos[videoIndex - 1]];
+      const next = [...prevGroups];
+      next[gIdx] = { ...next[gIdx], videos: nextVideos };
+      return next;
+    });
+
     try {
       const [prevOrder, currOrder] = [prev.sort_order ?? 0, curr.sort_order ?? 0];
-      await Promise.all([
+      const [prevRes, currRes] = await Promise.all([
         supabase.from("videos").update({ sort_order: currOrder }).eq("id", prev.id),
         supabase.from("videos").update({ sort_order: prevOrder }).eq("id", curr.id),
       ]);
-      await loadVideos();
+      if (prevRes.error || currRes.error) {
+        setCourseGroups(previousGroups);
+        await loadVideos();
+      }
     } finally {
       setReorderLoading(null);
     }
   }
 
-  /** 영상 순서: 아래로 */
+  /** 영상 순서: 아래로 — 낙관적 업데이트 후 Supabase 동기화 */
   async function moveVideoDown(courseId: string | null, videoIndex: number) {
     if (!supabase || videoIndex >= (courseGroups.find((g) => g.courseId === courseId)?.videos.length ?? 0) - 1) return;
     const group = courseGroups.find((g) => g.courseId === courseId);
@@ -391,13 +439,28 @@ export default function AdminVideosPage() {
     if (!curr || !next) return;
     setReorderLoading(`video-${curr.id}`);
     videosPageCache = null;
+
+    const previousGroups = courseGroups;
+    setCourseGroups((prevGroups) => {
+      const gIdx = prevGroups.findIndex((g) => g.courseId === courseId);
+      if (gIdx === -1) return prevGroups;
+      const nextVideos = [...prevGroups[gIdx].videos];
+      [nextVideos[videoIndex], nextVideos[videoIndex + 1]] = [nextVideos[videoIndex + 1], nextVideos[videoIndex]];
+      const next = [...prevGroups];
+      next[gIdx] = { ...next[gIdx], videos: nextVideos };
+      return next;
+    });
+
     try {
       const [currOrder, nextOrder] = [curr.sort_order ?? 0, next.sort_order ?? 0];
-      await Promise.all([
+      const [currRes, nextRes] = await Promise.all([
         supabase.from("videos").update({ sort_order: nextOrder }).eq("id", curr.id),
         supabase.from("videos").update({ sort_order: currOrder }).eq("id", next.id),
       ]);
-      await loadVideos();
+      if (currRes.error || nextRes.error) {
+        setCourseGroups(previousGroups);
+        await loadVideos();
+      }
     } finally {
       setReorderLoading(null);
     }
