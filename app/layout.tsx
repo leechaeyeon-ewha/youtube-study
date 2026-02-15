@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import KakaoAutoRedirect from "@/components/KakaoAutoRedirect";
 import PwaServiceWorkerRegister from "@/components/PwaServiceWorkerRegister";
 
 const geistSans = Geist({
@@ -48,7 +47,6 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <KakaoAutoRedirect />
         <PwaServiceWorkerRegister />
         {children}
       </body>

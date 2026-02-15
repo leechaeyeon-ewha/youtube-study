@@ -155,7 +155,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
-            fs: 1,
+            fs: 0, /* 전체 화면 버튼 비활성화 (와이드 뷰로 대체) */
             start: Math.floor(initialPosition),
           },
           events: {
@@ -217,7 +217,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     };
   }, []);
 
-  /** 배속 1x 고정: 단일 인터벌로만 체크 (rAF/다중 타이머 제거 → 오류·깜빡임 감소). YouTube 설정(배속) 버튼은 API로 숨길 수 없음. */
+  /** 배속 1x 고정: 단일 인터벌로만 체크. 와이드 뷰/가로 모드에서도 레이아웃과 무관하게 계속 동작함. */
   useEffect(() => {
     if (!ready) return;
 
@@ -364,7 +364,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           </div>
         )}
       </div>
-      <p className="mt-2 text-center text-xs text-zinc-500">
+      <p className="watch-player-hint mt-2 text-center text-xs text-zinc-500">
         재생이 안 되면{" "}
         <a href={youtubeUrl} target="_blank" rel="noopener noreferrer" className="text-red-500 underline">
           YouTube에서 보기

@@ -24,3 +24,46 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 시청 페이지: 가로 모드 시 시네마틱 뷰 (와이드 뷰, 영상만 꽉 차게) */
+.watch-page-landscape .watch-back-float {
+  display: none;
+}
+@media (orientation: landscape) {
+  .watch-page-landscape .watch-header {
+    display: none;
+  }
+  .watch-page-landscape .watch-footer {
+    display: none;
+  }
+  .watch-page-landscape .watch-main {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    width: 100%;
+  }
+  .watch-page-landscape .watch-video-inner {
+    padding: 0;
+  }
+  .watch-page-landscape .watch-video-wrap {
+    width: 100%;
+    max-width: 100vw;
+  }
+  .watch-page-landscape .watch-video-wrap .aspect-video {
+    max-height: calc(100vh - 2rem);
+    width: 100%;
+  }
+  .watch-page-landscape {
+    padding: 0;
+    padding-top: 0.5rem;
+  }
+  .watch-page-landscape .watch-back-float {
+    display: inline-flex;
+  }
+  .watch-page-landscape .watch-player-hint {
+    display: none;
+  }
+}

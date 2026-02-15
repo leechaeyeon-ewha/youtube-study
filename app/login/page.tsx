@@ -3,7 +3,6 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import KakaoBrowserBanner from "@/components/KakaoBrowserBanner";
 
 type Who = "admin" | "student" | null;
 type FormMode = "admin" | "student";
@@ -113,9 +112,6 @@ function LoginPageContent() {
   if (who === null) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
-        <div className="mb-4 w-full max-w-sm">
-          <KakaoBrowserBanner />
-        </div>
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mb-3 flex justify-center">
             <img
@@ -160,9 +156,6 @@ function LoginPageContent() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
-        <div className="mb-4 w-full max-w-sm">
-          <KakaoBrowserBanner />
-        </div>
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-4 flex justify-center">
           <img

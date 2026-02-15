@@ -62,7 +62,7 @@ export default function KakaoBrowserBanner() {
     window.location.href = intentUrl;
   };
 
-  /** Safari로 열기: 새 창으로 현재 URL. 카카오가 외부 브라우저 선택지 줄 수 있음 */
+  /** Safari로 열기 시도. 카카오 인앱에서는 대부분 Safari로 넘어가지 않고 같은 화면에 머무름 → iOS는 주소 복사 안내가 유일하게 확실한 방법 */
   const openInSafari = () => {
     window.open(window.location.href, "_blank", "noopener,noreferrer");
   };
@@ -87,6 +87,11 @@ export default function KakaoBrowserBanner() {
       <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
         Chrome(또는 Safari)으로 열어주시면 <strong>앱 설치</strong>와 더 쾌적한 이용이 가능합니다.
       </p>
+      {platform === "ios" && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          아이폰·카카오에서는 Safari로 바로 넘어가지 않을 수 있습니다. 아래 <strong>주소 복사</strong> 후 Safari를 열어 주소창에 붙여넣기 해 주세요.
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {platform === "android" && (
           <button
@@ -101,17 +106,17 @@ export default function KakaoBrowserBanner() {
           <>
             <button
               type="button"
-              onClick={openInSafari}
+              onClick={copyUrl}
               className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600"
             >
-              Safari로 열기
+              {copied ? "주소 복사됨" : "주소 복사 (Safari에 붙여넣기)"}
             </button>
             <button
               type="button"
-              onClick={copyUrl}
+              onClick={openInSafari}
               className="rounded-lg border border-amber-600 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-500 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-900/30"
             >
-              {copied ? "복사됨" : "주소 복사 (Safari에 붙여넣기)"}
+              Safari로 열기 시도
             </button>
           </>
         )}
