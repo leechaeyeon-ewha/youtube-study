@@ -68,6 +68,8 @@ export default function AdminClassesPage() {
   const [videoSourceTab, setVideoSourceTab] = useState<"playlist" | "single">("playlist");
   const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
+  /** 반 카드 클릭 시 해당 반 학생 목록 표시 */
+  const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) {
@@ -273,33 +275,52 @@ export default function AdminClassesPage() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-10">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">반 관리</h1>
 
-      {/* 반별 평균 진도율 */}
+      {/* 반별 평균 진도율 — 반 클릭 시 해당 반 학생 목록 표시 */}
       {classes.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">반별 평균 진도율</h2>
+          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">반을 클릭하면 해당 반에 속한 학생을 볼 수 있습니다.</p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {classes.map((c) => (
-              <div
-                key={c.id}
-                className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50"
-              >
-                <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{c.title}</p>
-                <p className="mt-1 text-2xl font-bold text-indigo-600 dark:text-indigo-400">{classProgress[c.id] ?? 0}%</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{students.filter((s) => s.class_id === c.id).length}명</p>
-              </div>
-            ))}
+            {classes.map((c) => {
+              const classStudents = students.filter((s) => s.class_id === c.id);
+              const isExpanded = expandedClassId === c.id;
+              return (
+                <div
+                  key={c.id}
+                  className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/50"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setExpandedClassId(isExpanded ? null : c.id)}
+                    className="w-full p-4 text-left hover:bg-slate-100/80 dark:hover:bg-zinc-700/50"
+                  >
+                    <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{c.title}</p>
+                    <p className="mt-1 text-2xl font-bold text-indigo-600 dark:text-indigo-400">{classProgress[c.id] ?? 0}%</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{classStudents.length}명</p>
+                  </button>
+                  {isExpanded && (
+                    <div className="border-t border-slate-200 bg-white px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/80">
+                      <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">소속 학생</p>
+                      {classStudents.length === 0 ? (
+                        <p className="text-sm text-slate-500 dark:text-slate-400">소속 학생이 없습니다.</p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {classStudents.map((s) => (
+                            <li key={s.id} className="text-sm text-slate-800 dark:text-slate-200">
+                              {s.full_name || s.email || s.id.slice(0, 8)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

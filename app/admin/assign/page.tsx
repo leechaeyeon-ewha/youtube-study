@@ -21,10 +21,21 @@ interface AssignmentRow {
     | null;
 }
 
+interface VideoWithCourse extends Video {
+  courses: { id: string; title: string } | null;
+}
+
+interface CourseGroup {
+  courseId: string | null;
+  courseTitle: string;
+  videos: VideoWithCourse[];
+}
+
+const STANDALONE_TITLE = "개별 보충 영상";
 const ASSIGN_CACHE_TTL_MS = 30 * 1000;
 let assignPageCache: {
   students: Profile[];
-  videos: Video[];
+  courseGroups: CourseGroup[];
   assignments: AssignmentRow[];
   at: number;
 } | null = null;
@@ -32,10 +43,12 @@ let assignPageCache: {
 export default function AdminAssignPage() {
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [courseGroups, setCourseGroups] = useState<CourseGroup[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState("");
+  const [videoSourceTab, setVideoSourceTab] = useState<"playlist" | "standalone">("playlist");
+  const [selectedCourseId, setSelectedCourseId] = useState<string | "">("");
   const [selectedVideo, setSelectedVideo] = useState("");
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
@@ -52,26 +65,50 @@ export default function AdminAssignPage() {
     const now = Date.now();
     if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
       setStudents(assignPageCache.students);
-      setVideos(assignPageCache.videos);
+      setCourseGroups(assignPageCache.courseGroups);
       setAssignments(assignPageCache.assignments);
       setLoading(false);
+      return;
     }
     const [profilesRes, videosRes, assignmentsRes] = await Promise.all([
       supabase.from("profiles").select("id, role, full_name, email").eq("role", "student").order("full_name"),
-      supabase.from("videos").select("id, title, video_id").order("title"),
+      supabase.from("videos").select("id, title, video_id, course_id, courses(id, title)").order("created_at", { ascending: false }),
       supabase
         .from("assignments")
         .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id), profiles(full_name, email)")
         .order("created_at", { ascending: false }),
     ]);
     const nextStudents = (profilesRes.error ? [] : (profilesRes.data as Profile[]) ?? []);
-    const nextVideos = (videosRes.error ? [] : (videosRes.data as Video[]) ?? []);
     const nextAssignments = (assignmentsRes.error ? [] : ((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+
+    let nextCourseGroups: CourseGroup[] = [];
+    if (!videosRes.error && videosRes.data) {
+      const list = videosRes.data as VideoWithCourse[];
+      const normalized = list.map((row) => ({
+        ...row,
+        courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
+      }));
+      const byCourse = new Map<string | null, VideoWithCourse[]>();
+      for (const v of normalized) {
+        const cid = v.course_id ?? null;
+        if (!byCourse.has(cid)) byCourse.set(cid, []);
+        byCourse.get(cid)!.push(v);
+      }
+      byCourse.forEach((videos, courseId) => {
+        const courseTitle = courseId == null ? STANDALONE_TITLE : (videos[0]?.courses?.title ?? "기타 영상");
+        nextCourseGroups.push({ courseId, courseTitle, videos });
+      });
+      nextCourseGroups.sort((a, b) => {
+        if (a.courseId == null) return 1;
+        if (b.courseId == null) return -1;
+        return a.courseTitle.localeCompare(b.courseTitle);
+      });
+    }
     setStudents(nextStudents);
-    setVideos(nextVideos);
+    setCourseGroups(nextCourseGroups);
     setAssignments(nextAssignments);
     setLoading(false);
-    assignPageCache = { students: nextStudents, videos: nextVideos, assignments: nextAssignments, at: Date.now() };
+    assignPageCache = { students: nextStudents, courseGroups: nextCourseGroups, assignments: nextAssignments, at: Date.now() };
   }
 
   useEffect(() => {
@@ -103,30 +140,42 @@ export default function AdminAssignPage() {
   async function handleAssign(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
-    if (!selectedStudent || !selectedVideo || !supabase) {
-      setMessage({ type: "error", text: "학생과 영상을 선택해 주세요." });
+    if (selectedStudentIds.length === 0 || !selectedVideo || !supabase) {
+      setMessage({ type: "error", text: "영상과 학생을 선택해 주세요." });
       return;
     }
     setSubmitLoading(true);
-    const { error } = await supabase.from("assignments").insert({
-      user_id: selectedStudent,
-      video_id: selectedVideo,
-      is_completed: false,
-      progress_percent: 0,
-      last_position: 0,
-      is_visible: true,
-      is_weekly_assignment: false,
-    });
-    if (error) {
-      if (error.code === "23505") {
-        setMessage({ type: "error", text: "이미 해당 학생에게 배정된 영상입니다." });
+    let inserted = 0;
+    let skipped = 0;
+    for (const userId of selectedStudentIds) {
+      const { error } = await supabase.from("assignments").insert({
+        user_id: userId,
+        video_id: selectedVideo,
+        is_completed: false,
+        progress_percent: 0,
+        last_position: 0,
+        is_visible: true,
+        is_weekly_assignment: false,
+      });
+      if (error) {
+        if (error.code === "23505") skipped += 1;
+        else {
+          setMessage({ type: "error", text: error.message });
+          setSubmitLoading(false);
+          return;
+        }
       } else {
-        setMessage({ type: "error", text: error.message });
+        inserted += 1;
       }
-      setSubmitLoading(false);
-      return;
     }
-    setMessage({ type: "success", text: "배정되었습니다." });
+    const msg =
+      inserted > 0
+        ? `${inserted}명에게 배정되었습니다.${skipped > 0 ? ` (이미 배정된 ${skipped}명 제외)` : ""}`
+        : skipped > 0
+          ? `선택한 학생 모두 이미 해당 영상이 배정되어 있습니다.`
+          : "배정되었습니다.";
+    setMessage({ type: "success", text: msg });
+    setSelectedStudentIds([]);
     setSubmitLoading(false);
     load();
   }
@@ -137,86 +186,180 @@ export default function AdminAssignPage() {
     load();
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-      </div>
-    );
-  }
-
   return (
     <div>
       <h1 className="mb-2 text-2xl font-bold text-slate-900 dark:text-white">
         학생 배정 · 진도 모니터링
       </h1>
       <p className="mb-8 text-slate-600 dark:text-slate-400">
-        영상과 학생을 선택해 1:1로 배정하고, 진도와 완료 여부를 확인하세요.
+        영상과 학생을 선택해 배정하고, 진도와 완료 여부를 확인하세요.
       </p>
 
-      <form onSubmit={handleAssign} className="mb-10 flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="min-w-[200px]">
-          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+      <form onSubmit={handleAssign} className="mb-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        {/* 영상 선택: 재생목록 / 동영상 탭 */}
+        <div className="mb-6">
+          <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
             영상 선택
           </label>
+          <div className="mb-3 flex gap-1 rounded-xl bg-slate-200/80 p-1 dark:bg-zinc-800/80">
+            <button
+              type="button"
+              onClick={() => {
+                setVideoSourceTab("playlist");
+                setSelectedCourseId("");
+                setSelectedVideo("");
+              }}
+              className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                videoSourceTab === "playlist"
+                  ? "bg-white text-slate-900 shadow dark:bg-zinc-700 dark:text-white"
+                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              재생목록
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setVideoSourceTab("standalone");
+                setSelectedCourseId("");
+                setSelectedVideo("");
+              }}
+              className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                videoSourceTab === "standalone"
+                  ? "bg-white text-slate-900 shadow dark:bg-zinc-700 dark:text-white"
+                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              동영상
+            </button>
+          </div>
           <input
             type="text"
             value={videoSearchTitle}
             onChange={(e) => setVideoSearchTitle(e.target.value)}
             placeholder="제목으로 검색..."
-            className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            className="mb-3 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
           />
-          <select
-            value={selectedVideo}
-            onChange={(e) => setSelectedVideo(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-          >
-            <option value="">영상 선택</option>
-            {(videoSearchTitle.trim()
-              ? videos.filter((v) => (v.title || "").toLowerCase().includes(videoSearchTitle.trim().toLowerCase()))
-              : videos
-            ).map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.title}
-              </option>
-            ))}
-          </select>
+          {videoSourceTab === "playlist" ? (
+            <>
+              <select
+                value={selectedCourseId}
+                onChange={(e) => {
+                  setSelectedCourseId(e.target.value);
+                  setSelectedVideo("");
+                }}
+                className="mb-2 mr-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              >
+                <option value="">재생목록 선택</option>
+                {courseGroups
+                  .filter((g) => g.courseId !== null)
+                  .map((g) => (
+                    <option key={g.courseId!} value={g.courseId!}>
+                      {g.courseTitle} ({g.videos.length}개)
+                    </option>
+                  ))}
+              </select>
+              <select
+                value={selectedVideo}
+                onChange={(e) => setSelectedVideo(e.target.value)}
+                className="min-w-[200px] rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              >
+                <option value="">영상 선택</option>
+                {(selectedCourseId
+                  ? (courseGroups.find((g) => g.courseId === selectedCourseId)?.videos ?? []).filter((v) =>
+                      videoSearchTitle.trim()
+                        ? (v.title || "").toLowerCase().includes(videoSearchTitle.trim().toLowerCase())
+                        : true
+                    )
+                  : []
+                ).map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.title}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <select
+              value={selectedVideo}
+              onChange={(e) => setSelectedVideo(e.target.value)}
+              className="min-w-[200px] rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            >
+              <option value="">동영상 선택</option>
+              {(courseGroups.find((g) => g.courseId === null)?.videos ?? [])
+                .filter((v) =>
+                  videoSearchTitle.trim()
+                    ? (v.title || "").toLowerCase().includes(videoSearchTitle.trim().toLowerCase())
+                    : true
+                )
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.title}
+                  </option>
+                ))}
+            </select>
+          )}
         </div>
-        <div className="min-w-[200px]">
+
+        {/* 학생 선택: 다중 선택 */}
+        <div className="mb-6">
           <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
             학생 선택
           </label>
-          <select
-            value={selectedStudent}
-            onChange={(e) => setSelectedStudent(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-          >
-            <option value="">학생 선택</option>
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.full_name || s.email || s.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
+          <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+            학생을 여러 명 선택할 수 있습니다.
+          </p>
+          <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 dark:border-zinc-600 dark:bg-zinc-800">
+            {students.length === 0 ? (
+              <p className="py-2 text-sm text-slate-500 dark:text-slate-400">등록된 학생이 없습니다.</p>
+            ) : (
+              <ul className="space-y-1">
+                {students.map((s) => (
+                  <li key={s.id}>
+                    <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-700">
+                      <input
+                        type="checkbox"
+                        checked={selectedStudentIds.includes(s.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedStudentIds((prev) => [...prev, s.id]);
+                          } else {
+                            setSelectedStudentIds((prev) => prev.filter((id) => id !== s.id));
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-700"
+                      />
+                      <span className="text-sm text-slate-800 dark:text-slate-200">
+                        {s.full_name || s.email || s.id.slice(0, 8)}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
-        <button
-          type="submit"
-          disabled={submitLoading}
-          className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {submitLoading ? "배정 중..." : "배정하기"}
-        </button>
-        {message && (
-          <span
-            className={
-              message.type === "error"
-                ? "text-red-600 dark:text-red-400"
-                : "text-green-600 dark:text-green-400"
-            }
+
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            type="submit"
+            disabled={submitLoading}
+            className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {message.text}
-          </span>
-        )}
+            {submitLoading ? "배정 중..." : "배정하기"}
+          </button>
+          {message && (
+            <span
+              className={
+                message.type === "error"
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-green-600 dark:text-green-400"
+              }
+            >
+              {message.text}
+            </span>
+          )}
+        </div>
       </form>
 
       <section>

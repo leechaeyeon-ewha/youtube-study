@@ -75,6 +75,35 @@ export default function AdminVideosPage() {
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
   const [reorderLoading, setReorderLoading] = useState<string | null>(null);
 
+  function buildCourseGroupsFromVideos(list: VideoWithCourse[]): CourseGroup[] {
+    const normalized = list.map((row) => ({
+      ...row,
+      sort_order: row.sort_order ?? 0,
+      courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
+    }));
+    const byCourse = new Map<string | null, VideoWithCourse[]>();
+    for (const v of normalized) {
+      const cid = v.course_id ?? null;
+      if (!byCourse.has(cid)) byCourse.set(cid, []);
+      byCourse.get(cid)!.push(v);
+    }
+    const groups: CourseGroup[] = [];
+    byCourse.forEach((videos, courseId) => {
+      const courseTitle = videos[0]?.courses?.title ?? "기타 영상";
+      const courseSortOrder = videos[0]?.courses?.sort_order ?? 0;
+      const sortedVideos = [...videos].sort(
+        (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.created_at ?? "").localeCompare(b.created_at ?? "")
+      );
+      groups.push({ courseId, courseTitle, courseSortOrder, videos: sortedVideos });
+    });
+    groups.sort((a, b) => {
+      if (a.courseId == null) return 1;
+      if (b.courseId == null) return -1;
+      return a.courseSortOrder - b.courseSortOrder || a.courseTitle.localeCompare(b.courseTitle);
+    });
+    return groups;
+  }
+
   async function loadVideos() {
     if (!supabase) {
       setLoading(false);
@@ -84,38 +113,28 @@ export default function AdminVideosPage() {
     if (videosPageCache && now - videosPageCache.at < VIDEOS_CACHE_TTL_MS) {
       setCourseGroups(videosPageCache.courseGroups);
       setLoading(false);
+      return;
     }
-    const { data, error } = await supabase
+    let data: VideoWithCourse[] | null = null;
+    let error: { message: string } | null = null;
+    const res = await supabase
       .from("videos")
       .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, sort_order, created_at, courses(id, title, sort_order)")
       .order("created_at", { ascending: false });
-    let groups: CourseGroup[] = [];
-    if (!error && data) {
-      const list = data as VideoWithCourse[];
-      const normalized = list.map((row) => ({
-        ...row,
-        sort_order: row.sort_order ?? 0,
-        courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
-      }));
-      const byCourse = new Map<string | null, VideoWithCourse[]>();
-      for (const v of normalized) {
-        const cid = v.course_id ?? null;
-        if (!byCourse.has(cid)) byCourse.set(cid, []);
-        byCourse.get(cid)!.push(v);
+    data = res.data as VideoWithCourse[] | null;
+    error = res.error;
+    if (error && data == null) {
+      const fallback = await supabase
+        .from("videos")
+        .select("id, title, video_id, course_id, created_at, courses(id, title)")
+        .order("created_at", { ascending: false });
+      if (!fallback.error && fallback.data) {
+        data = fallback.data as VideoWithCourse[];
+        error = null;
       }
-      byCourse.forEach((videos, courseId) => {
-        const courseTitle = videos[0]?.courses?.title ?? "기타 영상";
-        const courseSortOrder = videos[0]?.courses?.sort_order ?? 0;
-        const sortedVideos = [...videos].sort(
-          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.created_at ?? "").localeCompare(b.created_at ?? "")
-        );
-        groups.push({ courseId, courseTitle, courseSortOrder, videos: sortedVideos });
-      });
-      groups.sort((a, b) => {
-        if (a.courseId == null) return 1;
-        if (b.courseId == null) return -1;
-        return a.courseSortOrder - b.courseSortOrder || a.courseTitle.localeCompare(b.courseTitle);
-      });
+    }
+    if (!error && data && data.length >= 0) {
+      const groups = buildCourseGroupsFromVideos(data);
       setCourseGroups(groups);
       videosPageCache = { courseGroups: groups, at: Date.now() };
     }
