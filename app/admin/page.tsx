@@ -326,7 +326,7 @@ export default function AdminDashboardPage() {
         const courseTitle = videos[0]?.courses && !Array.isArray(videos[0].courses) ? (videos[0].courses as { title: string }).title : "기타 동영상";
         const courseSortOrder = (videos[0]?.courses && !Array.isArray(videos[0].courses) ? (videos[0].courses as { sort_order?: number }).sort_order : undefined) ?? 0;
         const sortedVideos = [...videos].sort(
-          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.created_at ?? "").localeCompare(b.created_at ?? "")
+          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || ((a as any).created_at ?? "").localeCompare((b as any).created_at ?? "")
         );
         groups.push({ courseId, courseTitle, videos: sortedVideos });
       });
