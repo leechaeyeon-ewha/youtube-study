@@ -77,7 +77,12 @@ export async function GET(
     }
     return n >= 0 && n <= 100 ? n : 0;
   };
-  const recentVideos = inWeek
+
+  const hasProgress = (a: { progress_percent?: unknown; last_watched_at: string | null }) =>
+    safePercent(a.progress_percent) > 0 || (a.last_watched_at != null && a.last_watched_at !== "");
+
+  const recentVideos = list
+    .filter(hasProgress)
     .map((a) => {
       const v = Array.isArray(a.videos) ? a.videos[0] : a.videos;
       return {
@@ -88,7 +93,7 @@ export async function GET(
       };
     })
     .sort((x, y) => (y.last_watched_at ?? "").localeCompare(x.last_watched_at ?? ""))
-    .slice(0, 20);
+    .slice(0, 50);
 
   const rateForComment = inWeek.length > 0 ? weeklyCompletion : monthlyCompletion;
   const comment =

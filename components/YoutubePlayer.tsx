@@ -124,11 +124,10 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             is_completed: completed,
             last_position: lastPosition,
             last_watched_at: now,
-            updated_at: now,
           })
           .eq("id", assignmentId);
       } catch (_: unknown) {
-        // ignore
+        // ignore (updated_at 컬럼 없을 수 있음)
       }
     },
     [assignmentId]
