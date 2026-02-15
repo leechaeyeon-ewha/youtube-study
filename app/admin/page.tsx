@@ -126,12 +126,23 @@ export default function AdminDashboardPage() {
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
     let nextByUser: Record<string, AssignmentWithVideo[]> = {};
-    if (!assignmentsRes.error) {
+    if (!assignmentsRes.error && assignmentsRes.data != null) {
       const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
       list.forEach((a) => {
         if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
         nextByUser[a.user_id].push(a);
       });
+    } else if (assignmentsRes.error) {
+      const fallback = await supabase
+        .from("assignments")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
+        .order("last_watched_at", { ascending: false });
+      if (!fallback.error && fallback.data) {
+        (fallback.data as AssignmentWithVideo[]).forEach((a) => {
+          if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
+          nextByUser[a.user_id].push(a);
+        });
+      }
     }
     const nextClasses = (classesRes.error ? [] : (classesRes.data as ClassRow[]) ?? []);
 
@@ -485,12 +496,20 @@ export default function AdminDashboardPage() {
     }
   }
 
-  /** 영상별 스킵 방지 on/off */
+  /** 영상별 스킵 방지 on/off (DB에 prevent_skip 컬럼이 있을 때만 동작) */
   async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean) {
     if (!supabase) return;
     setSkipToggleAssignmentId(assignmentId);
     try {
-      await supabase.from("assignments").update({ prevent_skip: !currentPreventSkip }).eq("id", assignmentId);
+      const { error } = await supabase.from("assignments").update({ prevent_skip: !currentPreventSkip }).eq("id", assignmentId);
+      if (error) {
+        if (error.message?.includes("prevent_skip") || error.code === "42703") {
+          alert("스킵 방지 설정을 사용하려면 Supabase에서 prevent_skip 컬럼을 추가해 주세요. (supabase/migration_prevent_skip.sql)");
+        } else {
+          alert(error.message || "설정 변경에 실패했습니다.");
+        }
+        return;
+      }
       dashboardCache = null;
       await load();
     } finally {
