@@ -49,6 +49,8 @@ interface Props {
   initialPosition?: number;
   /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 */
   preventSkip?: boolean;
+  /** 영상이 실제로 재생을 시작한 시점(최초 재생) 콜백 */
+  onFirstWatchStart?: () => void;
 }
 
 function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
@@ -78,7 +80,7 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
   });
 }
 
-export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true }: Props) {
+export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true, onFirstWatchStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -103,6 +105,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const maxWatchedWhenHiddenRef = useRef(initialPosition);
   /** 탭이 방금 visible로 바뀐 직후 한 번만 배경 재생분을 제외하고 보정 */
   const justBecameVisibleRef = useRef(false);
+  /** 영상이 실제로 한 번이라도 재생을 시작했는지 여부 (최초 재생 시 onFirstWatchStart 호출용) */
+  const hasFiredFirstWatchStartRef = useRef(false);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -296,6 +300,19 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
 
         const prevCurrent = lastCurrentRef.current;
         lastCurrentRef.current = current;
+
+        // 최초로 실제 재생이 시작된 시점(진도가 0보다 커지는 첫 순간)에 콜백 한 번만 호출
+        if (!hasFiredFirstWatchStartRef.current) {
+          const hasRealProgress = current > 0.1 || prevCurrent === 0 && current > 0;
+          if (hasRealProgress) {
+            hasFiredFirstWatchStartRef.current = true;
+            try {
+              onFirstWatchStart?.();
+            } catch {
+              // 콜백 예외는 플레이어 동작에 영향 주지 않음
+            }
+          }
+        }
 
         if (justBecameVisibleRef.current) {
           maxWatchedRef.current = Math.min(maxWatchedWhenHiddenRef.current, current);

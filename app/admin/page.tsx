@@ -1244,7 +1244,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
 
-      {/* 학습 시작 시각 목록 모달 */}
+      {/* 학습 시작 시각 목록 모달 (최초 시청 시작 시간 포함) */}
       {watchStartsModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -1259,7 +1259,7 @@ export default function AdminDashboardPage() {
           >
             <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
               <h2 id="watch-starts-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
-                학습 시작 시각
+                시청 시작 시간 기록
               </h2>
               <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400" title={watchStartsModal.videoTitle}>
                 {watchStartsModal.videoTitle}
@@ -1273,17 +1273,29 @@ export default function AdminDashboardPage() {
                   아직 기록된 학습 시작 시각이 없습니다. (학생이 이 영상 시청 페이지에 들어온 적이 없습니다)
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {watchStartsList.map((row) => (
-                    <li key={row.id} className="text-sm text-slate-800 dark:text-slate-200">
-                      {new Date(row.started_at).toLocaleString("ko-KR", {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                        hour12: false,
-                      })}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
+                    <span className="font-semibold">최초 시청 시작 시간: </span>
+                    {watchStartsList.length > 0
+                      ? new Date(watchStartsList[watchStartsList.length - 1].started_at).toLocaleString("ko-KR", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                          hour12: false,
+                        })
+                      : "—"}
+                  </p>
+                  <ul className="space-y-2">
+                    {watchStartsList.map((row) => (
+                      <li key={row.id} className="text-sm text-slate-800 dark:text-slate-200">
+                        {new Date(row.started_at).toLocaleString("ko-KR", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                          hour12: false,
+                        })}
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
             <div className="border-t border-slate-200 px-4 py-3 dark:border-zinc-700">
