@@ -44,6 +44,7 @@ export default function WatchPage() {
       setError("잘못된 경로입니다.");
       return;
     }
+    const id = assignmentId;
     if (!supabase) {
       setError("Supabase가 설정되지 않았습니다.");
       setLoading(false);
@@ -52,6 +53,7 @@ export default function WatchPage() {
 
     let cancelled = false;
     async function load() {
+      if (!id) return;
       const [{ data: { user } }, { data: { session } }] = await Promise.all([
         supabase.auth.getUser(),
         supabase.auth.getSession(),
@@ -66,7 +68,7 @@ export default function WatchPage() {
       const { data, error: fetchError } = await supabase
         .from("assignments")
         .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
-        .eq("id", assignmentId)
+        .eq("id", id)
         .eq("user_id", user.id)
         .single();
 
@@ -80,9 +82,9 @@ export default function WatchPage() {
       setAssignment(data as AssignmentRow);
 
       const token = session?.access_token;
-      const alreadyRecorded = recordedAssignmentIdsRef.current.has(assignmentId);
+      const alreadyRecorded = recordedAssignmentIdsRef.current.has(id);
       if (token && !alreadyRecorded) {
-        recordedAssignmentIdsRef.current.add(assignmentId);
+        recordedAssignmentIdsRef.current.add(id);
         try {
           const res = await fetch("/api/watch-start", {
             method: "POST",
@@ -90,7 +92,7 @@ export default function WatchPage() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ assignmentId }),
+            body: JSON.stringify({ assignmentId: id }),
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -99,7 +101,7 @@ export default function WatchPage() {
             }
           }
         } catch {
-          recordedAssignmentIdsRef.current.delete(assignmentId);
+          recordedAssignmentIdsRef.current.delete(id);
         }
       }
 
