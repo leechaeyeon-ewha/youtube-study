@@ -22,10 +22,18 @@ interface AssignmentRow {
   videos: Video | null;
 }
 
+/** URL의 assignmentId가 유효한 문자열인지 검사 후 반환. 유효하지 않으면 null */
+function parseAssignmentId(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const s = typeof raw === "string" ? raw.trim() : String(raw).trim();
+  if (s.length === 0) return null;
+  return s;
+}
+
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
-  const assignmentId = params?.assignmentId as string | undefined;
+  const assignmentId = parseAssignmentId(params?.assignmentId);
 
   const [mounted, setMounted] = useState(false);
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
@@ -40,11 +48,12 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (!assignmentId) {
+      console.error("[watch] assignmentId가 없거나 유효하지 않습니다.", params?.assignmentId);
       setLoading(false);
       setError("잘못된 경로입니다.");
       return;
     }
-    const id = assignmentId;
+    const id: string = assignmentId;
     if (!supabase) {
       setError("Supabase가 설정되지 않았습니다.");
       setLoading(false);
@@ -53,7 +62,6 @@ export default function WatchPage() {
 
     let cancelled = false;
     async function load() {
-      if (!id) return;
       const [{ data: { user } }, { data: { session } }] = await Promise.all([
         supabase.auth.getUser(),
         supabase.auth.getSession(),
@@ -95,12 +103,14 @@ export default function WatchPage() {
             body: JSON.stringify({ assignmentId: id }),
           });
           if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
+            const err = (await res.json().catch(() => ({}))) as { error?: string };
+            console.warn("[watch-start] 학습 시작 기록 실패:", res.status, err?.error);
             if (err?.error?.includes("watch_starts") || err?.error?.includes("테이블")) {
-              console.warn("[watch-start]", err.error);
+              console.warn("[watch-start] Supabase에 watch_starts 테이블을 생성해 주세요.");
             }
           }
-        } catch {
+        } catch (e) {
+          console.error("[watch-start] 요청 예외:", e);
           recordedAssignmentIdsRef.current.delete(id);
         }
       }
