@@ -74,6 +74,11 @@ export default function AdminVideosPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [videoSearchTitle, setVideoSearchTitle] = useState("");
   const [reorderLoading, setReorderLoading] = useState<string | null>(null);
+  const [refreshTitlesLoading, setRefreshTitlesLoading] = useState(false);
+  const [refreshTitlesMessage, setRefreshTitlesMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [videoDetailModal, setVideoDetailModal] = useState<{ id: string; title: string } | null>(null);
+  const [assignmentDetailList, setAssignmentDetailList] = useState<{ user_id: string; full_name: string | null; email: string | null; progress_percent: number; last_watched_at: string | null }[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   function buildCourseGroupsFromVideos(list: VideoWithCourse[]): CourseGroup[] {
     const normalized = list.map((row) => ({
@@ -259,6 +264,59 @@ export default function AdminVideosPage() {
       setPlaylistMessage({ type: "error", text: err instanceof Error ? err.message : "재생목록 등록에 실패했습니다." });
     } finally {
       setPlaylistLoading(false);
+    }
+  }
+
+  async function handleRefreshAllTitles() {
+    setRefreshTitlesMessage(null);
+    setRefreshTitlesLoading(true);
+    try {
+      const { data: { session } } = await supabase?.auth.getSession() ?? { data: { session: null } };
+      const res = await fetch("/api/admin/refresh-video-titles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: session?.access_token ? `Bearer ${session.access_token}` : "" },
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string; updated?: number; total?: number };
+      if (!res.ok) {
+        setRefreshTitlesMessage({ type: "error", text: data?.error ?? `요청 실패 (${res.status})` });
+        return;
+      }
+      setRefreshTitlesMessage({ type: "success", text: data?.message ?? `${data.updated ?? 0}개 제목을 업데이트했습니다.` });
+      videosPageCache = null;
+      loadVideos();
+    } catch (err: unknown) {
+      setRefreshTitlesMessage({ type: "error", text: err instanceof Error ? err.message : "제목 일괄 업데이트에 실패했습니다." });
+    } finally {
+      setRefreshTitlesLoading(false);
+    }
+  }
+
+  async function openVideoDetailModal(videoId: string, title: string) {
+    setVideoDetailModal({ id: videoId, title });
+    setAssignmentDetailList([]);
+    setDetailLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("assignments")
+        .select("user_id, progress_percent, last_watched_at, profiles(full_name, email)")
+        .eq("video_id", videoId)
+        .order("last_watched_at", { ascending: false });
+      if (error) throw error;
+      const rows = ((data ?? []) as { user_id: string; progress_percent: number; last_watched_at: string | null; profiles: { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null }[]).map((row) => {
+        const p = Array.isArray(row.profiles) ? row.profiles[0] ?? null : row.profiles;
+        return {
+          user_id: row.user_id,
+          full_name: p?.full_name ?? null,
+          email: p?.email ?? null,
+          progress_percent: Number(row.progress_percent) ?? 0,
+          last_watched_at: row.last_watched_at ?? null,
+        };
+      });
+      setAssignmentDetailList(rows);
+    } catch (_err: unknown) {
+      setAssignmentDetailList([]);
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -637,7 +695,7 @@ export default function AdminVideosPage() {
       {/* 등록된 재생목록 / 등록된 영상: 탭 + 할당/설정 */}
       <section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setActiveTab("playlist")}
@@ -660,7 +718,28 @@ export default function AdminVideosPage() {
             >
               등록된 영상
             </button>
+            <button
+              type="button"
+              onClick={handleRefreshAllTitles}
+              disabled={refreshTitlesLoading}
+              className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+            >
+              {refreshTitlesLoading ? "업데이트 중…" : "등록된 영상 제목 일괄 업데이트"}
+            </button>
           </div>
+        </div>
+        {refreshTitlesMessage && (
+          <div
+            className={`mb-4 rounded-lg px-4 py-3 text-sm ${
+              refreshTitlesMessage.type === "error"
+                ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                : "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+            }`}
+          >
+            {refreshTitlesMessage.text}
+          </div>
+        )}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           {(playlistGroups.length > 0 || standaloneVideos.length > 0) && (
             <div className="mb-3">
               <input
@@ -843,6 +922,13 @@ export default function AdminVideosPage() {
                             </div>
                             <button
                               type="button"
+                              onClick={() => openVideoDetailModal(v.id, v.title)}
+                              className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
+                            >
+                              배정 현황
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleDelete(v.id)}
                               className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
                             >
@@ -915,6 +1001,13 @@ export default function AdminVideosPage() {
                     </div>
                     <button
                       type="button"
+                      onClick={() => openVideoDetailModal(v.id, v.title)}
+                      className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
+                    >
+                      배정 현황
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleDelete(v.id)}
                       className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
                     >
@@ -927,6 +1020,80 @@ export default function AdminVideosPage() {
           </ul>
         )}
       </section>
+
+      {/* 영상별 배정 현황 모달 (이름 / 진도율 / 최근 시청일) */}
+      {videoDetailModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setVideoDetailModal(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="video-detail-modal-title"
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <h2 id="video-detail-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
+                배정 현황
+              </h2>
+              <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400" title={videoDetailModal.title}>
+                {videoDetailModal.title}
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
+              {detailLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner />
+                </div>
+              ) : assignmentDetailList.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                  이 영상을 배정받은 학생이 없습니다.
+                </p>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-zinc-700">
+                      <th className="py-2 pr-4 font-medium text-slate-600 dark:text-slate-400">이름</th>
+                      <th className="py-2 pr-4 font-medium text-slate-600 dark:text-slate-400">진도율</th>
+                      <th className="py-2 font-medium text-slate-600 dark:text-slate-400">최근 시청일</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignmentDetailList.map((row) => (
+                      <tr key={row.user_id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
+                        <td className="py-2.5 pr-4 font-medium text-slate-800 dark:text-slate-200">
+                          {row.full_name || row.email || row.user_id.slice(0, 8)}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <span className={row.progress_percent >= 100 ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
+                            {row.progress_percent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-slate-600 dark:text-slate-400">
+                          {row.last_watched_at
+                            ? new Date(row.last_watched_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short", hour12: false })
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => setVideoDetailModal(null)}
+                className="w-full rounded-lg bg-slate-200 py-2 text-sm font-medium text-slate-800 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 할당 모달 */}
       {assignModalOpen && (

@@ -59,6 +59,9 @@ export default function AdminClassesPage() {
 
   const [newClassTitle, setNewClassTitle] = useState("");
   const [addClassLoading, setAddClassLoading] = useState(false);
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [editClassLoading, setEditClassLoading] = useState(false);
 
   const [bulkAssignClassId, setBulkAssignClassId] = useState("");
   const [bulkAssignVideoIds, setBulkAssignVideoIds] = useState<string[]>([]);
@@ -227,9 +230,28 @@ export default function AdminClassesPage() {
 
   async function handleDeleteClass(classId: string) {
     if (!supabase || !confirm("이 반을 삭제할까요? 소속 학생의 반 정보만 해제됩니다.")) return;
+    if (editingClassId === classId) setEditingClassId(null);
     await supabase.from("profiles").update({ class_id: null }).eq("class_id", classId);
     await supabase.from("classes").delete().eq("id", classId);
     load();
+  }
+
+  async function handleSaveClassTitle(classId: string) {
+    const title = editingTitle.trim();
+    if (!supabase || !title) return;
+    setEditClassLoading(true);
+    try {
+      const { error } = await supabase.from("classes").update({ title }).eq("id", classId);
+      if (error) throw error;
+      setEditingClassId(null);
+      setEditingTitle("");
+      classesPageCache = null;
+      load();
+    } catch (_err: unknown) {
+      alert("반 이름 수정에 실패했습니다.");
+    } finally {
+      setEditClassLoading(false);
+    }
   }
 
   async function handleBulkAssignToClass(e: React.FormEvent) {
@@ -432,10 +454,52 @@ export default function AdminClassesPage() {
           <ul className="flex flex-wrap gap-2">
             {classes.map((c) => (
               <li key={c.id} className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-zinc-800">
-                <span className="font-medium text-slate-800 dark:text-white">{c.title}</span>
-                <button type="button" onClick={() => handleDeleteClass(c.id)} className="text-red-600 hover:underline dark:text-red-400">
-                  삭제
-                </button>
+                {editingClassId === c.id ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveClassTitle(c.id);
+                        if (e.key === "Escape") setEditingClassId(null);
+                      }}
+                      placeholder="예: 중2-A"
+                      className="w-32 rounded border border-slate-300 bg-white px-2 py-1 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      disabled={editClassLoading || !editingTitle.trim()}
+                      onClick={() => handleSaveClassTitle(c.id)}
+                      className="rounded bg-indigo-600 px-2 py-1 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {editClassLoading ? "저장 중…" : "저장"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={editClassLoading}
+                      onClick={() => { setEditingClassId(null); setEditingTitle(""); }}
+                      className="text-slate-600 hover:underline dark:text-slate-400"
+                    >
+                      취소
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium text-slate-800 dark:text-white">{c.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => { setEditingClassId(c.id); setEditingTitle(c.title); }}
+                      className="text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      수정
+                    </button>
+                    <button type="button" onClick={() => handleDeleteClass(c.id)} className="text-red-600 hover:underline dark:text-red-400">
+                      삭제
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

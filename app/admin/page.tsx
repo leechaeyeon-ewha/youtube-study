@@ -31,8 +31,8 @@ interface AssignmentWithVideo {
   last_watched_at: string | null;
   prevent_skip?: boolean;
   videos:
-    | { id: string; title: string; video_id: string }
-    | { id: string; title: string; video_id: string }[]
+    | { id: string; title: string; video_id: string; course_id: string | null; courses?: { id: string; title: string } | { id: string; title: string }[] | null }
+    | { id: string; title: string; video_id: string; course_id: string | null; courses?: { id: string; title: string } | { id: string; title: string }[] | null }[]
     | null;
 }
 
@@ -83,11 +83,16 @@ export default function AdminDashboardPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
   const [skipToggleAssignmentId, setSkipToggleAssignmentId] = useState<string | null>(null);
+  const [watchStartsModal, setWatchStartsModal] = useState<{ assignmentId: string; videoTitle: string } | null>(null);
+  const [watchStartsList, setWatchStartsList] = useState<{ id: string; started_at: string }[]>([]);
+  const [watchStartsLoading, setWatchStartsLoading] = useState(false);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
   const [enrollmentTab, setEnrollmentTab] = useState<"enrolled" | "withdrawn">("enrolled");
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  /** 학생별 배정 영상에서 펼친 재생목록: studentId -> courseId (null이면 재생목록 목록 보기) */
+  const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
   const [reEnrollUserId, setReEnrollUserId] = useState<string | null>(null);
   const [showMigrationModal, setShowMigrationModal] = useState(false);
   const [migrationRunning, setMigrationRunning] = useState(false);
@@ -124,7 +129,7 @@ export default function AdminDashboardPage() {
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, prevent_skip, videos(id, title, video_id)")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
@@ -140,7 +145,7 @@ export default function AdminDashboardPage() {
     } else if (assignmentsRes.error) {
       const fallback = await supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id)")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id, course_id, courses(id, title))")
         .order("last_watched_at", { ascending: false });
       if (!fallback.error && fallback.data) {
         (fallback.data as AssignmentWithVideo[]).forEach((a) => {
@@ -552,6 +557,26 @@ export default function AdminDashboardPage() {
       await load();
     } finally {
       setSkipToggleAssignmentId(null);
+    }
+  }
+
+  /** 학습 시작 시각 목록 모달 열기 및 데이터 로드 */
+  async function openWatchStartsModal(assignmentId: string, videoTitle: string) {
+    setWatchStartsModal({ assignmentId, videoTitle });
+    setWatchStartsList([]);
+    setWatchStartsLoading(true);
+    try {
+      const { data: { session } } = await supabase?.auth.getSession() ?? { data: { session: null } };
+      const res = await fetch(
+        `/api/admin/watch-starts?assignmentId=${encodeURIComponent(assignmentId)}`,
+        { headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {} }
+      );
+      const data = await res.json();
+      setWatchStartsList(Array.isArray(data) ? data : []);
+    } catch {
+      setWatchStartsList([]);
+    } finally {
+      setWatchStartsLoading(false);
     }
   }
 
@@ -1068,7 +1093,11 @@ export default function AdminDashboardPage() {
                 <div className="mt-3">
                   <button
                     type="button"
-                    onClick={() => setExpandedStudentId(expandedStudentId === s.id ? null : s.id)}
+                    onClick={() => {
+                      const next = expandedStudentId === s.id ? null : s.id;
+                      setExpandedStudentId(next);
+                      if (next === s.id) setExpandedPlaylistByStudent((p) => ({ ...p, [s.id]: null }));
+                    }}
                     className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
                   >
                     {expandedStudentId === s.id ? "배정된 영상 접기" : "배정된 영상 보기"}
@@ -1078,79 +1107,197 @@ export default function AdminDashboardPage() {
                       </span>
                     )}
                   </button>
-                  {expandedStudentId === s.id && (
-                    <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-700">
-                      <table className="w-full min-w-[400px] text-sm">
-                        <thead>
-                          <tr className="bg-slate-50 text-left text-slate-500 dark:bg-zinc-800 dark:text-slate-400">
-                            <th className="px-4 py-2 pr-4">영상</th>
-                            <th className="px-4 py-2 pr-4">진도율</th>
-                            <th className="px-4 py-2 pr-4">마지막 시청</th>
-                            <th className="px-4 py-2">스킵 방지</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(assignmentsByUser[s.id] ?? []).length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-4 py-4 text-slate-500 dark:text-slate-400">
-                                할당된 영상 없음
-                              </td>
-                            </tr>
-                          ) : (
-                            (assignmentsByUser[s.id] ?? []).map((a) => {
-                              const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                              const preventSkip = a.prevent_skip !== false;
-                              return (
-                                <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
-                                  <td className="px-4 py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
-                                    {video?.title ?? "-"}
-                                  </td>
-                                  <td className="px-4 py-2 pr-4">
-                                    <span className={a.is_completed ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
-                                      {a.progress_percent.toFixed(1)}%
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
-                                    {formatLastWatched(a.last_watched_at)}
-                                  </td>
-                                  <td className="px-4 py-2">
-                                    <button
-                                      type="button"
-                                      disabled={skipToggleAssignmentId === a.id}
-                                      onClick={() => handleTogglePreventSkip(a.id, preventSkip)}
-                                      role="switch"
-                                      aria-checked={preventSkip}
-                                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
-                                        preventSkip
-                                          ? "border-indigo-500 bg-indigo-600"
-                                          : "border-slate-300 bg-slate-200 dark:border-zinc-600 dark:bg-zinc-700"
-                                      }`}
-                                      title={preventSkip ? "스킵 방지 켜짐 (끄려면 클릭)" : "스킵 방지 꺼짐 (켜려면 클릭)"}
-                                    >
-                                      <span
-                                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
-                                          preventSkip ? "translate-x-5" : "translate-x-1"
+                  {expandedStudentId === s.id && (() => {
+                    const list = assignmentsByUser[s.id] ?? [];
+                    const NONE_KEY = "__none__";
+                    const groups = (() => {
+                      const map = new Map<string, { courseTitle: string; assignments: AssignmentWithVideo[] }>();
+                      for (const a of list) {
+                        const v = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                        const key = v?.course_id ?? NONE_KEY;
+                        const courseTitle = (() => {
+                          if (!v?.courses) return "기타 동영상";
+                          const c = Array.isArray(v.courses) ? v.courses[0] : v.courses;
+                          return (c as { title?: string })?.title ?? "기타 동영상";
+                        })();
+                        if (!map.has(key)) map.set(key, { courseTitle, assignments: [] });
+                        map.get(key)!.assignments.push(a);
+                      }
+                      return Array.from(map.entries()).map(([courseKey, { courseTitle, assignments }]) => ({ courseKey, courseTitle, assignments }));
+                    })();
+                    const selectedKey = expandedPlaylistByStudent[s.id];
+                    const showPlaylistList = selectedKey == null;
+
+                    if (list.length === 0) {
+                      return (
+                        <div className="mt-3 rounded-lg border border-slate-200 px-4 py-4 text-sm text-slate-500 dark:border-zinc-700 dark:text-slate-400">
+                          할당된 영상 없음
+                        </div>
+                      );
+                    }
+                    if (showPlaylistList) {
+                      return (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">재생목록을 선택하면 해당 영상 목록을 볼 수 있습니다.</p>
+                          <ul className="space-y-1.5 rounded-lg border border-slate-200 dark:border-zinc-700">
+                            {groups.map(({ courseKey, courseTitle, assignments }) => (
+                              <li key={courseKey}>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedPlaylistByStudent((p) => ({ ...p, [s.id]: courseKey }))}
+                                  className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-zinc-800/50"
+                                >
+                                  <span className="truncate">{courseTitle}</span>
+                                  <span className="ml-2 shrink-0 text-slate-500 dark:text-slate-400">({assignments.length}개 영상) →</span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    }
+                    const current = groups.find((g) => g.courseKey === selectedKey);
+                    const showList = current?.assignments ?? [];
+                    return (
+                      <div className="mt-3 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPlaylistByStudent((p) => ({ ...p, [s.id]: null }))}
+                          className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          ← 재생목록으로
+                        </button>
+                        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-700">
+                          <table className="w-full min-w-[400px] text-sm">
+                            <thead>
+                              <tr className="bg-slate-50 text-left text-slate-500 dark:bg-zinc-800 dark:text-slate-400">
+                                <th className="px-4 py-2 pr-4">영상</th>
+                                <th className="px-4 py-2 pr-4">진도율</th>
+                                <th className="px-4 py-2 pr-4">마지막 시청</th>
+                                <th className="px-4 py-2 pr-4">학습 시작</th>
+                                <th className="px-4 py-2">스킵 방지</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {showList.map((a) => {
+                                const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                                const preventSkip = a.prevent_skip !== false;
+                                return (
+                                  <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
+                                    <td className="px-4 py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
+                                      {video?.title ?? "-"}
+                                    </td>
+                                    <td className="px-4 py-2 pr-4">
+                                      <span className={a.is_completed ? "text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
+                                        {a.progress_percent.toFixed(1)}%
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
+                                      {formatLastWatched(a.last_watched_at)}
+                                    </td>
+                                    <td className="px-4 py-2 pr-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => openWatchStartsModal(a.id, video?.title ?? "영상")}
+                                        className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                                      >
+                                        학습 시작 시간 모두 보기
+                                      </button>
+                                    </td>
+                                    <td className="px-4 py-2">
+                                      <button
+                                        type="button"
+                                        disabled={skipToggleAssignmentId === a.id}
+                                        onClick={() => handleTogglePreventSkip(a.id, preventSkip)}
+                                        role="switch"
+                                        aria-checked={preventSkip}
+                                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+                                          preventSkip
+                                            ? "border-indigo-500 bg-indigo-600"
+                                            : "border-slate-300 bg-slate-200 dark:border-zinc-600 dark:bg-zinc-700"
                                         }`}
-                                      />
-                                    </button>
-                                    <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
-                                      {preventSkip ? "켜짐" : "꺼짐"}
-                                    </span>
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                                        title={preventSkip ? "스킵 방지 켜짐 (끄려면 클릭)" : "스킵 방지 꺼짐 (켜려면 클릭)"}
+                                      >
+                                        <span
+                                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                                            preventSkip ? "translate-x-5" : "translate-x-1"
+                                          }`}
+                                        />
+                                      </button>
+                                      <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                                        {preventSkip ? "켜짐" : "꺼짐"}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             ))
           )}
         </div>
       </section>
+
+      {/* 학습 시작 시각 목록 모달 */}
+      {watchStartsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setWatchStartsModal(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="watch-starts-modal-title"
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <h2 id="watch-starts-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
+                학습 시작 시각
+              </h2>
+              <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400" title={watchStartsModal.videoTitle}>
+                {watchStartsModal.videoTitle}
+              </p>
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
+              {watchStartsLoading ? (
+                <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">불러오는 중...</p>
+              ) : watchStartsList.length === 0 ? (
+                <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                  아직 기록된 학습 시작 시각이 없습니다. (학생이 이 영상 시청 페이지에 들어온 적이 없습니다)
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {watchStartsList.map((row) => (
+                    <li key={row.id} className="text-sm text-slate-800 dark:text-slate-200">
+                      {new Date(row.started_at).toLocaleString("ko-KR", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                        hour12: false,
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => setWatchStartsModal(null)}
+                className="w-full rounded-lg bg-slate-200 py-2 text-sm font-medium text-slate-800 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

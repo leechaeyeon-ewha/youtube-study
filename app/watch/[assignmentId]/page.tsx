@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -31,6 +31,7 @@ export default function WatchPage() {
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const watchStartRecordedRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -73,6 +74,24 @@ export default function WatchPage() {
       }
 
       setAssignment(data as AssignmentRow);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && !watchStartRecordedRef.current) {
+        watchStartRecordedRef.current = true;
+        try {
+          await fetch("/api/watch-start", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ assignmentId }),
+          });
+        } catch {
+          // 기록 실패해도 시청은 가능하도록 무시
+        }
+      }
+
       setLoading(false);
     }
 

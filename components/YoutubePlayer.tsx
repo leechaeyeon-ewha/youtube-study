@@ -95,6 +95,14 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const lastKnownRateRef = useRef<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 영상 종료 시 추천 영상 클릭 방지용 오버레이 표시 (YT.PlayerState.ENDED === 0) */
+  const [showEndedOverlay, setShowEndedOverlay] = useState(false);
+  /** 다른 탭으로 이동한 동안 진도 미적용: 탭이 hidden일 때 true */
+  const tabHiddenRef = useRef(false);
+  /** 탭이 hidden이 되었을 때의 maxWatched(진도로 인정한 최대 시청 위치) — 복귀 시 배경 재생분 반영 안 함 */
+  const maxWatchedWhenHiddenRef = useRef(initialPosition);
+  /** 탭이 방금 visible로 바뀐 직후 한 번만 배경 재생분을 제외하고 보정 */
+  const justBecameVisibleRef = useRef(false);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -170,8 +178,12 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
               }
               setReady(true);
             },
-            onStateChange: () => {
-              if (!mounted || !playerRef.current) return;
+            onStateChange: (e: { data: number }) => {
+              if (!mounted) return;
+              /* ENDED(0)일 때만 추천 영상 클릭 차단 오버레이 표시, 재생/일시정지 시 제거 */
+              if (e.data === 0) setShowEndedOverlay(true);
+              else setShowEndedOverlay(false);
+              if (!playerRef.current) return;
               try {
                 const p = playerRef.current;
                 const r = p.getPlaybackRate();
@@ -194,6 +206,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       if (player?.destroy) player.destroy();
       playerRef.current = null;
       setReady(false);
+      setShowEndedOverlay(false);
     };
   }, [isClient, videoId, initialPosition]);
 
@@ -241,6 +254,22 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     return () => clearInterval(interval);
   }, [ready, showRateToast]);
 
+  /** 다른 탭일 때 진도 카운트/저장 중단, 복귀 시 배경 재생분 미적용 */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        tabHiddenRef.current = true;
+        maxWatchedWhenHiddenRef.current = maxWatchedRef.current;
+      } else {
+        tabHiddenRef.current = false;
+        justBecameVisibleRef.current = true;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
   useEffect(() => {
     if (!ready || !assignmentId) return;
 
@@ -248,6 +277,11 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       try {
         const p = playerRef.current;
         if (!p) return;
+
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+          lastCurrentRef.current = p.getCurrentTime();
+          return;
+        }
 
         const state = p.getPlayerState();
         if (state !== 1) return;
@@ -262,6 +296,13 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
 
         const prevCurrent = lastCurrentRef.current;
         lastCurrentRef.current = current;
+
+        if (justBecameVisibleRef.current) {
+          maxWatchedRef.current = Math.min(maxWatchedWhenHiddenRef.current, current);
+          lastCurrentRef.current = maxWatchedRef.current;
+          justBecameVisibleRef.current = false;
+          return;
+        }
 
         if (preventSkip) {
           const jumpForward = current - prevCurrent > 1.5;
@@ -348,6 +389,12 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           ref={containerRef}
           className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
+        {/* 유튜브 로고 클릭 시 유튜브로 이동하는 것 방지: 오른쪽 하단 클릭 차단 */}
+        <div
+          className="absolute bottom-0 right-0 z-10 h-14 w-32 cursor-default"
+          title="진도 저장을 위해 이 페이지에서 시청해 주세요."
+          aria-hidden
+        />
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
@@ -355,19 +402,27 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           />
         </div>
         {toastMessage && (
+            <div
+              role="alert"
+              className="absolute bottom-4 left-4 right-4 z-10 rounded-lg bg-slate-900/95 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:min-w-[280px] sm:-translate-x-1/2"
+            >
+              {toastMessage}
+            </div>
+        )}
+        {/* 영상 종료 시 추천 영상 클릭 방지: 전체 플레이어를 덮어 클릭 불가 */}
+        {showEndedOverlay && (
           <div
-            role="alert"
-            className="absolute bottom-4 left-4 right-4 z-10 rounded-lg bg-slate-900/95 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:min-w-[280px] sm:-translate-x-1/2"
+            className="absolute inset-0 z-20 flex cursor-default items-center justify-center bg-black/60 backdrop-blur-[1px]"
+            title="영상 시청이 완료되었습니다"
           >
-            {toastMessage}
+            <p className="rounded-lg bg-slate-900/90 px-4 py-2 text-sm font-medium text-white">
+              영상 시청이 완료되었습니다
+            </p>
           </div>
         )}
       </div>
       <p className="watch-player-hint mt-2 text-center text-xs text-zinc-500">
-        재생이 안 되면{" "}
-        <a href={youtubeUrl} target="_blank" rel="noopener noreferrer" className="text-red-500 underline">
-          YouTube에서 보기
-        </a>
+        재생이 안 되면 이 페이지에서 시청해 주세요.
         <span className="text-amber-600"> (YouTube에서 보시면 진도가 저장되지 않습니다)</span>
       </p>
     </>
