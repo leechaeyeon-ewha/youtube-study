@@ -83,9 +83,6 @@ export default function AdminDashboardPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
   const [skipToggleAssignmentId, setSkipToggleAssignmentId] = useState<string | null>(null);
-  const [watchStartsModal, setWatchStartsModal] = useState<{ assignmentId: string; videoTitle: string } | null>(null);
-  const [watchStartsList, setWatchStartsList] = useState<{ id: string; started_at: string }[]>([]);
-  const [watchStartsLoading, setWatchStartsLoading] = useState(false);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
@@ -557,26 +554,6 @@ export default function AdminDashboardPage() {
       await load();
     } finally {
       setSkipToggleAssignmentId(null);
-    }
-  }
-
-  /** 학습 시작 시각 목록 모달 열기 및 데이터 로드 */
-  async function openWatchStartsModal(assignmentId: string, videoTitle: string) {
-    setWatchStartsModal({ assignmentId, videoTitle });
-    setWatchStartsList([]);
-    setWatchStartsLoading(true);
-    try {
-      const { data: { session } } = await supabase?.auth.getSession() ?? { data: { session: null } };
-      const res = await fetch(
-        `/api/admin/watch-starts?assignmentId=${encodeURIComponent(assignmentId)}`,
-        { headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {} }
-      );
-      const data = await res.json();
-      setWatchStartsList(Array.isArray(data) ? data : []);
-    } catch {
-      setWatchStartsList([]);
-    } finally {
-      setWatchStartsLoading(false);
     }
   }
 
@@ -1174,7 +1151,6 @@ export default function AdminDashboardPage() {
                                 <th className="px-4 py-2 pr-4">영상</th>
                                 <th className="px-4 py-2 pr-4">진도율</th>
                                 <th className="px-4 py-2 pr-4">마지막 시청</th>
-                                <th className="px-4 py-2 pr-4">학습 시작</th>
                                 <th className="px-4 py-2">스킵 방지</th>
                               </tr>
                             </thead>
@@ -1194,15 +1170,6 @@ export default function AdminDashboardPage() {
                                     </td>
                                     <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
                                       {formatLastWatched(a.last_watched_at)}
-                                    </td>
-                                    <td className="px-4 py-2 pr-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => openWatchStartsModal(a.id, video?.title ?? "영상")}
-                                        className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                                      >
-                                        학습 시작 시간 모두 보기
-                                      </button>
                                     </td>
                                     <td className="px-4 py-2">
                                       <button
@@ -1243,73 +1210,6 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </section>
-
-      {/* 학습 시작 시각 목록 모달 (최초 시청 시작 시간 포함) */}
-      {watchStartsModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setWatchStartsModal(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="watch-starts-modal-title"
-        >
-          <div
-            className="max-h-[80vh] w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
-              <h2 id="watch-starts-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
-                시청 시작 시간 기록
-              </h2>
-              <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400" title={watchStartsModal.videoTitle}>
-                {watchStartsModal.videoTitle}
-              </p>
-            </div>
-            <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
-              {watchStartsLoading ? (
-                <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">불러오는 중...</p>
-              ) : watchStartsList.length === 0 ? (
-                <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                  아직 기록된 학습 시작 시각이 없습니다. (학생이 이 영상 시청 페이지에 들어온 적이 없습니다)
-                </p>
-              ) : (
-                <>
-                  <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
-                    <span className="font-semibold">최초 시청 시작 시간: </span>
-                    {watchStartsList.length > 0
-                      ? new Date(watchStartsList[watchStartsList.length - 1].started_at).toLocaleString("ko-KR", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                          hour12: false,
-                        })
-                      : "—"}
-                  </p>
-                  <ul className="space-y-2">
-                    {watchStartsList.map((row) => (
-                      <li key={row.id} className="text-sm text-slate-800 dark:text-slate-200">
-                        {new Date(row.started_at).toLocaleString("ko-KR", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                          hour12: false,
-                        })}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-            <div className="border-t border-slate-200 px-4 py-3 dark:border-zinc-700">
-              <button
-                type="button"
-                onClick={() => setWatchStartsModal(null)}
-                className="w-full rounded-lg bg-slate-200 py-2 text-sm font-medium text-slate-800 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-              >
-                닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

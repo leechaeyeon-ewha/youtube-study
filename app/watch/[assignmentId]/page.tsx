@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -39,8 +39,6 @@ export default function WatchPage() {
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /** 이 컴포넌트 라이프사이클 동안 학습 시작 시간을 서버에 한 번이라도 기록했는지 여부 */
-  const hasSentStartRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -118,32 +116,6 @@ export default function WatchPage() {
 
   const video = assignment.videos;
 
-  async function handleFirstWatchStart() {
-    if (!assignment || hasSentStartRef.current) return;
-    hasSentStartRef.current = true;
-    try {
-      if (!supabase) return;
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) return;
-      const res = await fetch("/api/watch-start", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ assignmentId: assignment.id as string }),
-      });
-      if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        console.warn("[watch-start] 최초 시청 시작 시간 기록 실패:", res.status, err?.error);
-      }
-    } catch (e) {
-      console.error("[watch-start] 최초 시청 시작 시간 요청 예외:", e);
-      hasSentStartRef.current = false;
-    }
-  }
-
   return (
     <div className="watch-page-landscape flex min-h-[100dvh] flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
       <header className="watch-header mb-6 w-full max-w-4xl mx-auto">
@@ -166,7 +138,6 @@ export default function WatchPage() {
               assignmentId={assignment.id}
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
               preventSkip={assignment.prevent_skip !== false}
-              onFirstWatchStart={handleFirstWatchStart}
             />
           </div>
         </div>
