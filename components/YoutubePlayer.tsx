@@ -119,23 +119,36 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
       if (!Number.isFinite(playedSeconds) || playedSeconds < 0) return;
       if (percent === 0 && playedSeconds === 0 && !completed) return;
-      const now = new Date().toISOString();
+
+      const nowIso = new Date().toISOString();
+      const today = nowIso.slice(0, 10); // YYYY-MM-DD
+
       const progressPercent = completed ? 100 : Math.min(100, Math.round(percent * 100) / 100);
       const lastPosition = playedSeconds;
       if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) return;
       if (!Number.isFinite(lastPosition) || lastPosition < 0) return;
+
       try {
+        // 1) 기존 assignments 진도/마지막 시청 시각 업데이트
         await supabase
           .from("assignments")
           .update({
             progress_percent: progressPercent,
             is_completed: completed,
             last_position: lastPosition,
-            last_watched_at: now,
+            last_watched_at: nowIso,
           })
           .eq("id", assignmentId);
+
+        // 2) watch_logs에 오늘 날짜 기준으로 한 줄만 누적 (assignment_id + watched_date unique)
+        await supabase
+          .from("watch_logs")
+          .upsert(
+            { assignment_id: assignmentId, watched_date: today },
+            { onConflict: "assignment_id, watched_date" }
+          );
       } catch (_: unknown) {
-        // ignore (updated_at 컬럼 없을 수 있음)
+        // ignore (일시적 오류는 플레이어 동작에 영향 주지 않도록)
       }
     },
     [assignmentId]
