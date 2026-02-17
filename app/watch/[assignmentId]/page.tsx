@@ -31,7 +31,8 @@ export default function WatchPage() {
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const watchStartRecordedRef = useRef(false);
+  /** 이미 학습 시작 기록을 보낸 assignmentId 집합 (과제별 1회, 다른 영상으로 이동 시에도 기록) */
+  const recordedAssignmentIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setMounted(true);
@@ -51,7 +52,10 @@ export default function WatchPage() {
 
     let cancelled = false;
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
+      const [{ data: { user } }, { data: { session } }] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.auth.getSession(),
+      ]);
       if (cancelled) return;
       if (!user) {
         setLoading(false);
@@ -63,7 +67,7 @@ export default function WatchPage() {
         .from("assignments")
         .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
         .eq("id", assignmentId)
-        .eq("user_id", user?.id ?? "")
+        .eq("user_id", user.id)
         .single();
 
       if (cancelled) return;
@@ -75,20 +79,27 @@ export default function WatchPage() {
 
       setAssignment(data as AssignmentRow);
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && !watchStartRecordedRef.current) {
-        watchStartRecordedRef.current = true;
+      const token = session?.access_token;
+      const alreadyRecorded = recordedAssignmentIdsRef.current.has(assignmentId);
+      if (token && !alreadyRecorded) {
+        recordedAssignmentIdsRef.current.add(assignmentId);
         try {
-          await fetch("/api/watch-start", {
+          const res = await fetch("/api/watch-start", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({ assignmentId }),
           });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            if (err?.error?.includes("watch_starts") || err?.error?.includes("테이블")) {
+              console.warn("[watch-start]", err.error);
+            }
+          }
         } catch {
-          // 기록 실패해도 시청은 가능하도록 무시
+          recordedAssignmentIdsRef.current.delete(assignmentId);
         }
       }
 

@@ -51,7 +51,16 @@ export async function POST(req: Request) {
   });
 
   if (insertErr) {
-    return NextResponse.json({ error: "기록에 실패했습니다." }, { status: 500 });
+    const msg = insertErr.message ?? "";
+    const tableMissing = msg.includes("watch_starts") || msg.includes("does not exist") || insertErr.code === "42P01";
+    return NextResponse.json(
+      {
+        error: tableMissing
+          ? "watch_starts 테이블이 없습니다. Supabase 대시보드 → SQL Editor에서 supabase/migration_watch_starts.sql 내용을 실행해 주세요."
+          : "기록에 실패했습니다.",
+      },
+      { status: tableMissing ? 503 : 500 }
+    );
   }
   return NextResponse.json({ ok: true });
 }
