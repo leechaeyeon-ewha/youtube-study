@@ -102,14 +102,6 @@ export default function AdminDashboardPage() {
   const [assignPlaylistCourseKey, setAssignPlaylistCourseKey] = useState<string | null>(null);
   const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
-  /** 시청 날짜 기록 모달 상태 */
-  const [watchLogsModal, setWatchLogsModal] = useState<{
-    assignmentId: string;
-    studentName: string;
-    videoTitle: string;
-  } | null>(null);
-  const [watchLogs, setWatchLogs] = useState<{ id: string; watched_date: string; created_at?: string | null }[]>([]);
-  const [watchLogsLoading, setWatchLogsLoading] = useState(false);
 
   async function load() {
     if (!supabase) {
@@ -590,46 +582,6 @@ export default function AdminDashboardPage() {
     if (!at) return "-";
     const d = new Date(at);
     return d.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
-  }
-
-  function formatDateOnly(dateStr: string | null | undefined) {
-    if (!dateStr) return "-";
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("ko-KR", { dateStyle: "medium" });
-  }
-
-  async function openWatchLogsModal(assignment: AssignmentWithVideo, student: Profile) {
-    if (!supabase) return;
-    const video = Array.isArray(assignment.videos) ? assignment.videos[0] : assignment.videos;
-    const studentName = student.full_name || student.email || student.id.slice(0, 8);
-    const videoTitle = video?.title ?? "-";
-    setWatchLogsModal({
-      assignmentId: assignment.id,
-      studentName,
-      videoTitle,
-    });
-    setWatchLogs([]);
-    setWatchLogsLoading(true);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch(`/api/admin/watch-logs?assignmentId=${encodeURIComponent(assignment.id)}`, {
-        headers: session?.access_token
-          ? { Authorization: `Bearer ${session.access_token}` }
-          : {},
-      });
-      if (!res.ok) {
-        setWatchLogs([]);
-        return;
-      }
-      const data = (await res.json()) as { id: string; watched_date: string; created_at?: string | null }[];
-      setWatchLogs(Array.isArray(data) ? data : []);
-    } catch {
-      setWatchLogs([]);
-    } finally {
-      setWatchLogsLoading(false);
-    }
   }
 
   const studentsFiltered = students.filter(
@@ -1199,7 +1151,6 @@ export default function AdminDashboardPage() {
                                 <th className="px-4 py-2 pr-4">영상</th>
                                 <th className="px-4 py-2 pr-4">진도율</th>
                                 <th className="px-4 py-2 pr-4">마지막 시청</th>
-                                <th className="px-4 py-2 pr-4">시청 날짜 기록</th>
                                 <th className="px-4 py-2">스킵 방지</th>
                               </tr>
                             </thead>
@@ -1219,15 +1170,6 @@ export default function AdminDashboardPage() {
                                     </td>
                                     <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
                                       {formatLastWatched(a.last_watched_at)}
-                                    </td>
-                                    <td className="px-4 py-2 pr-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => openWatchLogsModal(a, s)}
-                                        className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                      >
-                                        기록 보기
-                                      </button>
                                     </td>
                                     <td className="px-4 py-2">
                                       <button
@@ -1268,55 +1210,6 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </section>
-      {/* 시청 날짜 기록 모달 */}
-      {watchLogsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
-          <div className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-            <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">
-              시청 날짜 기록
-            </h3>
-            <p className="mb-1 text-sm text-slate-700 dark:text-slate-200">
-              <span className="font-medium">{watchLogsModal.studentName}</span> 학생
-            </p>
-            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-              영상: <span className="font-medium text-slate-700 dark:text-slate-200">{watchLogsModal.videoTitle}</span>
-            </p>
-            {watchLogsLoading ? (
-              <div className="flex justify-center py-6">
-                <LoadingSpinner />
-              </div>
-            ) : watchLogs.length === 0 ? (
-              <p className="py-4 text-sm text-slate-600 dark:text-slate-400">
-                아직 시청 날짜 기록이 없습니다.
-              </p>
-            ) : (
-              <ul className="max-h-80 space-y-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800">
-                {watchLogs.map((log) => (
-                  <li key={log.id} className="flex items-center justify-between">
-                    <span className="text-slate-800 dark:text-slate-100">
-                      {formatDateOnly(log.watched_date)}
-                    </span>
-                    {log.created_at && (
-                      <span className="text-xs text-slate-500 dark:text-slate-400">
-                        기록 생성: {new Date(log.created_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setWatchLogsModal(null)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
-              >
-                닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
