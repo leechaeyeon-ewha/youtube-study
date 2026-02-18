@@ -33,6 +33,9 @@ interface AssignmentWithVideo {
   last_watched_at: string | null;
   started_at?: string | null;
   prevent_skip?: boolean;
+  is_visible?: boolean;
+  /** 우선 학습(오늘의 미션) 여부 */
+  is_priority?: boolean;
   videos:
     | { id: string; title: string; video_id: string; course_id: string | null; courses?: { id: string; title: string } | { id: string; title: string }[] | null }
     | { id: string; title: string; video_id: string; course_id: string | null; courses?: { id: string; title: string } | { id: string; title: string }[] | null }[]
@@ -86,6 +89,7 @@ export default function AdminDashboardPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [reportToggleUserId, setReportToggleUserId] = useState<string | null>(null);
   const [skipToggleAssignmentId, setSkipToggleAssignmentId] = useState<string | null>(null);
+  const [priorityToggleAssignmentId, setPriorityToggleAssignmentId] = useState<string | null>(null);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [updatingClassId, setUpdatingClassId] = useState<string | null>(null);
@@ -107,6 +111,11 @@ export default function AdminDashboardPage() {
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
   /** 시청 상세 모달: 최초 시청 시작 시간 등 표시 */
   const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentWithVideo | null>(null);
+  const [watchStartsOpen, setWatchStartsOpen] = useState(false);
+  const [watchStartsLoading, setWatchStartsLoading] = useState(false);
+  const [watchStartsError, setWatchStartsError] = useState<string | null>(null);
+  const [watchStartsAssignmentId, setWatchStartsAssignmentId] = useState<string | null>(null);
+  const [watchStarts, setWatchStarts] = useState<{ id: string; started_at: string }[]>([]);
   /** 학생 목록 정렬 기준: 기본, 학년별, 반별 */
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
 
@@ -133,7 +142,9 @@ export default function AdminDashboardPage() {
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
+        .select(
+          "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))",
+        )
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
@@ -142,17 +153,22 @@ export default function AdminDashboardPage() {
     let nextByUser: Record<string, AssignmentWithVideo[]> = {};
     if (!assignmentsRes.error && assignmentsRes.data != null) {
       const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
-      list.forEach((a) => {
+      const visibleList = list.filter((a) => a.is_visible !== false);
+      visibleList.forEach((a) => {
         if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
         nextByUser[a.user_id].push(a);
       });
     } else if (assignmentsRes.error) {
       const fallback = await supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
+        .select(
+          "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))",
+        )
         .order("last_watched_at", { ascending: false });
       if (!fallback.error && fallback.data) {
-        (fallback.data as AssignmentWithVideo[]).forEach((a) => {
+        ((fallback.data as unknown) as AssignmentWithVideo[])
+          .filter((a) => a.is_visible !== false)
+          .forEach((a) => {
           if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
           nextByUser[a.user_id].push(a);
         });
@@ -171,6 +187,38 @@ export default function AdminDashboardPage() {
       classes: nextClasses,
       at: Date.now(),
     };
+  }
+
+  async function handleToggleWatchStarts(assignmentId: string) {
+    if (!supabase) return;
+
+    if (watchStartsOpen && watchStartsAssignmentId === assignmentId) {
+      setWatchStartsOpen(false);
+      return;
+    }
+
+    setWatchStartsOpen(true);
+    setWatchStartsAssignmentId(assignmentId);
+    setWatchStartsLoading(true);
+    setWatchStartsError(null);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
+      }
+      const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers });
+      if (!res.ok) {
+        throw new Error("학습 시작 시간 목록을 불러오지 못했습니다.");
+      }
+      const json = (await res.json()) as { id: string; started_at: string }[];
+      setWatchStarts(json);
+    } catch (err: unknown) {
+      setWatchStartsError(err instanceof Error ? err.message : "학습 시작 시간 목록을 불러오지 못했습니다.");
+    } finally {
+      setWatchStartsLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -561,6 +609,27 @@ export default function AdminDashboardPage() {
       await load();
     } finally {
       setSkipToggleAssignmentId(null);
+    }
+  }
+
+  /** 영상별 우선 학습 on/off (is_priority 컬럼 기반) */
+  async function handleTogglePriority(assignmentId: string, currentPriority: boolean | undefined) {
+    if (!supabase) return;
+    setPriorityToggleAssignmentId(assignmentId);
+    try {
+      const { error } = await supabase.from("assignments").update({ is_priority: !currentPriority }).eq("id", assignmentId);
+      if (error) {
+        if (error.message?.includes("is_priority") || error.code === "42703") {
+          alert("우선 학습 설정을 사용하려면 Supabase에서 is_priority 컬럼을 추가해 주세요. (supabase/migration_assignments_priority.sql)");
+        } else {
+          alert(error.message || "우선 학습 설정 변경에 실패했습니다.");
+        }
+        return;
+      }
+      dashboardCache = null;
+      await load();
+    } finally {
+      setPriorityToggleAssignmentId(null);
     }
   }
 
@@ -1243,6 +1312,7 @@ export default function AdminDashboardPage() {
                                 <th className="px-4 py-2 pr-4">진도율</th>
                                 <th className="px-4 py-2 pr-4">마지막 시청</th>
                                 <th className="px-4 py-2 pr-4">상세</th>
+                                <th className="px-4 py-2 pr-4">우선 학습</th>
                                 <th className="px-4 py-2">스킵 방지</th>
                               </tr>
                             </thead>
@@ -1250,6 +1320,7 @@ export default function AdminDashboardPage() {
                               {showList.map((a) => {
                                 const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
                                 const preventSkip = a.prevent_skip !== false;
+                                const isPriority = a.is_priority === true;
                                 return (
                                   <tr key={a.id} className="border-t border-slate-100 dark:border-zinc-700/50">
                                     <td className="px-4 py-2 pr-4 font-medium text-slate-800 dark:text-slate-200">
@@ -1271,6 +1342,30 @@ export default function AdminDashboardPage() {
                                       >
                                         상세
                                       </button>
+                                    </td>
+                                    <td className="px-4 py-2 pr-4">
+                                      <button
+                                        type="button"
+                                        disabled={priorityToggleAssignmentId === a.id}
+                                        onClick={() => handleTogglePriority(a.id, isPriority)}
+                                        role="switch"
+                                        aria-checked={isPriority}
+                                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:opacity-50 ${
+                                          isPriority
+                                            ? "border-amber-500 bg-amber-500"
+                                            : "border-slate-300 bg-slate-200 dark:border-zinc-600 dark:bg-zinc-700"
+                                        }`}
+                                        title={isPriority ? "우선 학습 켜짐 (끄려면 클릭)" : "우선 학습 꺼짐 (켜려면 클릭)"}
+                                      >
+                                        <span
+                                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                                            isPriority ? "translate-x-5" : "translate-x-1"
+                                          }`}
+                                        />
+                                      </button>
+                                      <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                                        {isPriority ? "우선" : "일반"}
+                                      </span>
                                     </td>
                                     <td className="px-4 py-2">
                                       <button
@@ -1320,6 +1415,7 @@ export default function AdminDashboardPage() {
             {(() => {
               const a = detailModalAssignment;
               const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+              const isCurrentAssignment = watchStartsAssignmentId === a.id;
               return (
                 <dl className="space-y-3 text-sm">
                   <div>
@@ -1338,13 +1434,53 @@ export default function AdminDashboardPage() {
                     <dt className="text-slate-500 dark:text-slate-400">최초 시청 시작 시간</dt>
                     <dd className="text-slate-800 dark:text-slate-200">{formatStartedAt(a.started_at)}</dd>
                   </div>
+                  <div>
+                    <dt className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                      <span>학습 시작 시간</span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleWatchStarts(a.id)}
+                        className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+                      >
+                        {watchStartsOpen && isCurrentAssignment ? "목록 접기" : "목록 보기"}
+                      </button>
+                    </dt>
+                    <dd className="mt-1 text-slate-800 dark:text-slate-200">
+                      {watchStartsOpen && isCurrentAssignment ? (
+                        watchStartsLoading ? (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">불러오는 중...</span>
+                        ) : watchStartsError ? (
+                          <span className="text-sm text-red-600 dark:text-red-400">{watchStartsError}</span>
+                        ) : watchStarts.length === 0 ? (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">학습 시작 기록이 없습니다.</span>
+                        ) : (
+                          <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
+                            {watchStarts.map((w) => (
+                              <li key={w.id} className="text-slate-700 dark:text-slate-200">
+                                {new Date(w.started_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}
+                              </li>
+                            ))}
+                          </ul>
+                        )
+                      ) : (
+                        <span className="text-sm text-slate-500 dark:text-slate-400">버튼을 눌러 학습 시작 기록을 확인하세요.</span>
+                      )}
+                    </dd>
+                  </div>
                 </dl>
               );
             })()}
             <div className="mt-6 flex justify-end">
               <button
                 type="button"
-                onClick={() => setDetailModalAssignment(null)}
+                onClick={() => {
+                  setDetailModalAssignment(null);
+                  setWatchStartsOpen(false);
+                  setWatchStartsAssignmentId(null);
+                  setWatchStarts([]);
+                  setWatchStartsLoading(false);
+                  setWatchStartsError(null);
+                }}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
               >
                 닫기

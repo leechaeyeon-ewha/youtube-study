@@ -412,9 +412,9 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
-        {/* 우하단: 유튜브 로고·재생목록 아이콘 클릭 시 유튜브로 이동 방지 */}
+        {/* 우하단: 유튜브 버튼·학원 로고만 클릭 차단 (설정 톱니는 클릭 가능하도록 영역을 우측 끝으로만 제한) */}
         <div
-          className="absolute bottom-0 right-0 z-10 h-20 w-40 cursor-default"
+          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
