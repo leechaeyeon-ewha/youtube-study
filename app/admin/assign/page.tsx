@@ -16,7 +16,7 @@ interface AssignmentRow {
   prevent_skip?: boolean;
   is_visible?: boolean;
   is_priority?: boolean;
-  // Supabase 타입 상 videos/profiles가 배열로 잡힐 수 있어서 단일·배열 모두 허용
+  // Supabase 타입 상 videos가 배열로 잡힐 수 있어서 단일·배열 모두 허용
   videos:
     | {
         id: string;
@@ -33,15 +33,18 @@ interface AssignmentRow {
         courses?: { id: string; title: string } | { id: string; title: string }[] | null;
       }[]
     | null;
-  profiles:
-    | { full_name: string | null; email: string | null }
-    | { full_name: string | null; email: string | null }[]
-    | null;
+}
+
+interface StudentSummary {
+  id: string;
+  full_name: string | null;
+  email: string | null;
 }
 
 const ASSIGN_CACHE_TTL_MS = 30 * 1000;
 let assignPageCache: {
   assignments: AssignmentRow[];
+  students: StudentSummary[];
   at: number;
 } | null = null;
 
@@ -54,6 +57,10 @@ export default function AdminAssignPage() {
   const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete">>({});
   /** 학생별 배정 영상에서 펼친 재생목록: studentId -> courseKey (null이면 재생목록 목록 보기) */
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
+  /** 학생 요약 정보 (이름/이메일) — /api/admin/students 기반 */
+  const [students, setStudents] = useState<StudentSummary[]>([]);
+  /** 학생별 다중 선택된 배정 ID 목록 */
+  const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
 
   async function load() {
     if (!supabase) {
@@ -63,17 +70,52 @@ export default function AdminAssignPage() {
     const now = Date.now();
     if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
       setAssignments(assignPageCache.assignments);
+      setStudents(assignPageCache.students);
       setLoading(false);
       return;
     }
-    const { data, error } = await supabase
-      .from("assignments")
-      .select(`${ADMIN_ASSIGNMENTS_SELECT}, profiles(full_name, email)`)
-      .order("created_at", { ascending: false });
-    const nextAssignments = error ? [] : ((data ?? []) as unknown) as AssignmentRow[];
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const authHeaders: Record<string, string> = session?.access_token
+      ? { Authorization: `Bearer ${session.access_token}` }
+      : {};
+
+    const [studentsRes, assignmentsRes] = await Promise.all([
+      fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
+      supabase
+        .from("assignments")
+        .select(ADMIN_ASSIGNMENTS_SELECT)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    const nextStudents = Array.isArray(studentsRes) ? (studentsRes as StudentSummary[]) : [];
+    const nextAssignments = assignmentsRes.error
+      ? []
+      : (((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+
+    setStudents(nextStudents);
     setAssignments(nextAssignments);
     setLoading(false);
-    assignPageCache = { assignments: nextAssignments, at: Date.now() };
+    assignPageCache = { assignments: nextAssignments, students: nextStudents, at: Date.now() };
+  }
+
+  function toggleSelectAssignment(userId: string, assignmentId: string) {
+    setSelectedByStudent((prev) => {
+      const prevList = prev[userId] ?? [];
+      const exists = prevList.includes(assignmentId);
+      const nextList = exists ? prevList.filter((id) => id !== assignmentId) : [...prevList, assignmentId];
+      return { ...prev, [userId]: nextList };
+    });
+  }
+
+  async function handleBulkUnassign(userId: string) {
+    if (!supabase) return;
+    const ids = selectedByStudent[userId] ?? [];
+    if (ids.length === 0) return;
+    if (!confirm(`선택한 ${ids.length}개의 배정을 해제할까요?`)) return;
+    await supabase.from("assignments").delete().in("id", ids);
+    setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    load();
   }
 
   useEffect(() => {
@@ -142,9 +184,8 @@ export default function AdminAssignPage() {
                   byStudent.set(a.user_id, list);
                 }
                 return Array.from(byStudent.entries()).map(([userId, list]) => {
-                  const first = list[0];
-                  const profile = Array.isArray(first.profiles) ? first.profiles[0] : first.profiles;
-                  const studentName = profile?.full_name || profile?.email || userId.slice(0, 8);
+                  const student = students.find((s) => s.id === userId);
+                  const studentName = student?.full_name || student?.email || userId.slice(0, 8);
                   const isExpanded = expandedStudentId === userId;
                   return (
                     <li key={userId} className="bg-white dark:bg-zinc-900">
@@ -291,6 +332,9 @@ export default function AdminAssignPage() {
                               <table className="w-full text-left text-sm">
                                 <thead>
                                   <tr className="border-b border-slate-200 dark:border-zinc-700">
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">
+                                      <span className="sr-only">선택</span>
+                                    </th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">마지막 시청</th>
@@ -301,15 +345,25 @@ export default function AdminAssignPage() {
                                 <tbody>
                                   {showList.length === 0 ? (
                                     <tr>
-                                      <td colSpan={5} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
+                                      <td colSpan={6} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
                                         이 재생목록에 해당 조건의 배정 영상이 없습니다.
                                       </td>
                                     </tr>
                                   ) : (
                                     showList.map((a) => {
                                       const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                                      const selectedIds = selectedByStudent[userId] ?? [];
+                                      const checked = selectedIds.includes(a.id);
                                       return (
                                         <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
+                                          <td className="px-4 py-2.5">
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={() => toggleSelectAssignment(userId, a.id)}
+                                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-700"
+                                            />
+                                          </td>
                                           <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
                                             {video?.title ?? "-"}
                                           </td>
@@ -346,6 +400,21 @@ export default function AdminAssignPage() {
                                 </tbody>
                               </table>
                             </div>
+                            {(() => {
+                              const selectedIds = selectedByStudent[userId] ?? [];
+                              if (selectedIds.length === 0) return null;
+                              return (
+                                <div className="flex justify-end px-4 py-3 border-t border-slate-200 dark:border-zinc-700">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBulkUnassign(userId)}
+                                    className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                                  >
+                                    선택한 {selectedIds.length}개 배정 해제
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })()}

@@ -57,6 +57,21 @@ interface LibraryCourseGroup {
   videos: LibraryVideo[];
 }
 
+/** 같은 학생에게 같은 영상이 여러 번 배정된 경우, 대시보드에서는 고유한 영상만 1개로 취급하기 위한 헬퍼 */
+function dedupeAssignmentsByVideo(assignments: AssignmentWithVideo[]): AssignmentWithVideo[] {
+  const seen = new Set<string>();
+  const result: AssignmentWithVideo[] = [];
+  for (const a of assignments) {
+    const v = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+    const videoKey = v?.id ?? v?.video_id ?? a.id;
+    const key = `${a.user_id}:${videoKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(a);
+  }
+  return result;
+}
+
 /** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
 const DASHBOARD_CACHE_TTL_MS = 30 * 1000;
 
@@ -1239,14 +1254,17 @@ export default function AdminDashboardPage() {
                     className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
                   >
                     {expandedStudentId === s.id ? "배정된 영상 접기" : "배정된 영상 보기"}
-                    {(assignmentsByUser[s.id] ?? []).length > 0 && (
-                      <span className="ml-1.5 text-slate-500">
-                        ({(assignmentsByUser[s.id] ?? []).length}개)
-                      </span>
-                    )}
+                    {(() => {
+                      const rawList = assignmentsByUser[s.id] ?? [];
+                      const uniqueList = dedupeAssignmentsByVideo(rawList);
+                      return uniqueList.length > 0 ? (
+                        <span className="ml-1.5 text-slate-500">({uniqueList.length}개)</span>
+                      ) : null;
+                    })()}
                   </button>
                   {expandedStudentId === s.id && (() => {
-                    const list = assignmentsByUser[s.id] ?? [];
+                    const rawList = assignmentsByUser[s.id] ?? [];
+                    const list = dedupeAssignmentsByVideo(rawList);
                     const NONE_KEY = "__none__";
                     const groups = (() => {
                       const map = new Map<string, { courseTitle: string; assignments: AssignmentWithVideo[] }>();
