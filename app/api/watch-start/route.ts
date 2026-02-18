@@ -19,10 +19,17 @@ export async function POST(req: Request) {
   }
   console.log(LOG_PREFIX, "2. token 존재함");
 
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+  // 학생의 토큰을 Supabase 클라이언트에 붙여서 RLS가 정상 동작하도록 설정
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
   const {
     data: { user },
-  } = await supabase.auth.getUser(token);
+  } = await supabase.auth.getUser();
   if (!user) {
     console.error(LOG_PREFIX, "3. getUser 실패: 로그인 만료 또는 유효하지 않은 token");
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
