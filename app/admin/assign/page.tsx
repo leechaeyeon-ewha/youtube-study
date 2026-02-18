@@ -71,6 +71,99 @@ export default function AdminAssignPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   /** 학생별 다중 선택된 배정 ID 목록 */
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
+  /** 시청 상세 모달에 표시할 배정 */
+  const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentRow | null>(null);
+  /** 우선 학습 / 스킵 방지 토글 로딩 */
+  const [priorityToggleAssignmentId, setPriorityToggleAssignmentId] = useState<string | null>(null);
+  const [skipToggleAssignmentId, setSkipToggleAssignmentId] = useState<string | null>(null);
+  /** 학습 시작 시간 목록 (시청 상세 모달용) */
+  const [watchStartsOpen, setWatchStartsOpen] = useState(false);
+  const [watchStartsLoading, setWatchStartsLoading] = useState(false);
+  const [watchStartsError, setWatchStartsError] = useState<string | null>(null);
+  const [watchStartsAssignmentId, setWatchStartsAssignmentId] = useState<string | null>(null);
+  const [watchStarts, setWatchStarts] = useState<{ id: string; started_at: string }[]>([]);
+
+  function formatLastWatched(value: string | null | undefined): string {
+    if (value == null || value === "") return "-";
+    try {
+      return new Date(value).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+    } catch {
+      return "-";
+    }
+  }
+  function formatStartedAt(value: string | null | undefined): string {
+    if (value == null || value === "") return "-";
+    try {
+      return new Date(value).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+    } catch {
+      return "-";
+    }
+  }
+
+  async function handleToggleWatchStarts(assignmentId: string) {
+    if (!supabase) return;
+    if (watchStartsOpen && watchStartsAssignmentId === assignmentId) {
+      setWatchStartsOpen(false);
+      return;
+    }
+    setWatchStartsOpen(true);
+    setWatchStartsAssignmentId(assignmentId);
+    setWatchStartsLoading(true);
+    setWatchStartsError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers });
+      if (!res.ok) throw new Error("학습 시작 시간 목록을 불러오지 못했습니다.");
+      const json = (await res.json()) as { id: string; started_at: string }[];
+      setWatchStarts(json);
+    } catch (err: unknown) {
+      setWatchStartsError(err instanceof Error ? err.message : "학습 시작 시간 목록을 불러오지 못했습니다.");
+    } finally {
+      setWatchStartsLoading(false);
+    }
+  }
+
+  async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean | undefined) {
+    if (!supabase) return;
+    setSkipToggleAssignmentId(assignmentId);
+    try {
+      const { error } = await supabase.from("assignments").update({ prevent_skip: !currentPreventSkip }).eq("id", assignmentId);
+      if (error) {
+        if (error.message?.includes("prevent_skip") || error.code === "42703") {
+          alert("스킵 방지 설정을 사용하려면 Supabase에서 prevent_skip 컬럼을 추가해 주세요. (supabase/migration_prevent_skip.sql)");
+        } else {
+          alert(error.message || "설정 변경에 실패했습니다.");
+        }
+        return;
+      }
+      assignPageCache = null;
+      await load();
+    } finally {
+      setSkipToggleAssignmentId(null);
+    }
+  }
+
+  async function handleTogglePriority(assignmentId: string, currentPriority: boolean | undefined) {
+    if (!supabase) return;
+    setPriorityToggleAssignmentId(assignmentId);
+    try {
+      const { error } = await supabase.from("assignments").update({ is_priority: !currentPriority }).eq("id", assignmentId);
+      if (error) {
+        if (error.message?.includes("is_priority") || error.code === "42703") {
+          alert("우선 학습 설정을 사용하려면 Supabase에서 is_priority 컬럼을 추가해 주세요. (supabase/migration_assignments_priority.sql)");
+        } else {
+          alert(error.message || "우선 학습 설정 변경에 실패했습니다.");
+        }
+        return;
+      }
+      assignPageCache = null;
+      await load();
+    } finally {
+      setPriorityToggleAssignmentId(null);
+    }
+  }
 
   async function load() {
     if (!supabase) {
@@ -364,13 +457,16 @@ export default function AdminAssignPage() {
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">마지막 시청</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">완료</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">상세</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">우선 학습</th>
+                                    <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">스킵 방지</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">관리</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {showList.length === 0 ? (
                                     <tr>
-                                      <td colSpan={6} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
+                                      <td colSpan={9} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
                                         이 재생목록에 해당 조건의 배정 영상이 없습니다.
                                       </td>
                                     </tr>
@@ -408,6 +504,61 @@ export default function AdminAssignPage() {
                                             ) : (
                                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">미완료</span>
                                             )}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => setDetailModalAssignment(a)}
+                                              className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+                                            >
+                                              상세
+                                            </button>
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={!!a.is_priority}
+                                                disabled={priorityToggleAssignmentId === a.id}
+                                                onClick={() => handleTogglePriority(a.id, a.is_priority)}
+                                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+                                                  a.is_priority ? "bg-indigo-600" : "bg-slate-200 dark:bg-zinc-600"
+                                                }`}
+                                              >
+                                                <span
+                                                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                                                    a.is_priority ? "translate-x-5" : "translate-x-0.5"
+                                                  }`}
+                                                />
+                                              </button>
+                                              <span className="text-xs text-slate-600 dark:text-slate-400">
+                                                {a.is_priority ? "우선" : "일반"}
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={!!a.prevent_skip}
+                                                disabled={skipToggleAssignmentId === a.id}
+                                                onClick={() => handleTogglePreventSkip(a.id, a.prevent_skip)}
+                                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+                                                  a.prevent_skip ? "bg-indigo-600" : "bg-slate-200 dark:bg-zinc-600"
+                                                }`}
+                                              >
+                                                <span
+                                                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                                                    a.prevent_skip ? "translate-x-5" : "translate-x-0.5"
+                                                  }`}
+                                                />
+                                              </button>
+                                              <span className="text-xs text-slate-600 dark:text-slate-400">
+                                                {a.prevent_skip ? "켜짐" : "꺼짐"}
+                                              </span>
+                                            </div>
                                           </td>
                                           <td className="px-4 py-2.5">
                                             <button
@@ -451,6 +602,87 @@ export default function AdminAssignPage() {
           )}
         </div>
       </section>
+
+      {/* 시청 상세 모달: 최초 시청 시작 시간 등 */}
+      {detailModalAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">시청 상세</h3>
+            {(() => {
+              const a = detailModalAssignment;
+              const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+              const isCurrentAssignment = watchStartsAssignmentId === a.id;
+              return (
+                <dl className="space-y-3 text-sm">
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">영상</dt>
+                    <dd className="font-medium text-slate-800 dark:text-slate-200">{video?.title ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">진도율</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{a.progress_percent.toFixed(1)}%</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">마지막 시청</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{formatLastWatched(a.last_watched_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">최초 시청 시작 시간</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{formatStartedAt(a.started_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                      <span>학습 시작 시간</span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleWatchStarts(a.id)}
+                        className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+                      >
+                        {watchStartsOpen && isCurrentAssignment ? "목록 접기" : "목록 보기"}
+                      </button>
+                    </dt>
+                    <dd className="mt-1 text-slate-800 dark:text-slate-200">
+                      {watchStartsOpen && isCurrentAssignment ? (
+                        watchStartsLoading ? (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">불러오는 중...</span>
+                        ) : watchStartsError ? (
+                          <span className="text-sm text-red-600 dark:text-red-400">{watchStartsError}</span>
+                        ) : watchStarts.length === 0 ? (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">학습 시작 기록이 없습니다.</span>
+                        ) : (
+                          <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
+                            {watchStarts.map((w) => (
+                              <li key={w.id} className="text-slate-700 dark:text-slate-200">
+                                {new Date(w.started_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}
+                              </li>
+                            ))}
+                          </ul>
+                        )
+                      ) : (
+                        <span className="text-sm text-slate-500 dark:text-slate-400">버튼을 눌러 학습 시작 기록을 확인하세요.</span>
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              );
+            })()}
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailModalAssignment(null);
+                  setWatchStartsOpen(false);
+                  setWatchStartsAssignmentId(null);
+                  setWatchStarts([]);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
