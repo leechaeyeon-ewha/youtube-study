@@ -63,35 +63,37 @@ export async function POST(req: Request) {
   }
   console.log(LOG_PREFIX, "5. assignment 행 존재함, started_at 현재값:", assignment.started_at ?? "null");
 
-  if (assignment.started_at != null && assignment.started_at !== "") {
-    console.log(LOG_PREFIX, "6. 이미 기록됨, 스킵");
-    return NextResponse.json({ ok: true, alreadyRecorded: true });
-  }
-
   const now = new Date().toISOString();
-  console.log(LOG_PREFIX, "6. assignments.started_at 업데이트 시도:", now);
-  const { error: updateErr } = await supabase
-    .from("assignments")
-    .update({ started_at: now })
-    .eq("id", assignmentId as string)
-    .eq("user_id", user.id)
-    .is("started_at", null);
+  const isFirstTime = assignment.started_at == null || assignment.started_at === "";
 
-  if (updateErr) {
-    const msg = updateErr.message ?? "";
-    const noColumn = msg.includes("started_at") || updateErr.code === "42703";
-    console.error(LOG_PREFIX, "7. assignments 업데이트 실패:", updateErr.code, msg);
-    return NextResponse.json(
-      {
-        error: noColumn
-          ? "started_at 컬럼이 없습니다. Supabase에서 supabase/migration_assignments_started_at.sql 을 실행해 주세요."
-          : "기록에 실패했습니다.",
-      },
-      { status: noColumn ? 503 : 500 }
-    );
+  if (isFirstTime) {
+    console.log(LOG_PREFIX, "6. assignments.started_at 업데이트 시도:", now);
+    const { error: updateErr } = await supabase
+      .from("assignments")
+      .update({ started_at: now })
+      .eq("id", assignmentId as string)
+      .eq("user_id", user.id)
+      .is("started_at", null);
+
+    if (updateErr) {
+      const msg = updateErr.message ?? "";
+      const noColumn = msg.includes("started_at") || updateErr.code === "42703";
+      console.error(LOG_PREFIX, "7. assignments 업데이트 실패:", updateErr.code, msg);
+      return NextResponse.json(
+        {
+          error: noColumn
+            ? "started_at 컬럼이 없습니다. Supabase에서 supabase/migration_assignments_started_at.sql 을 실행해 주세요."
+            : "기록에 실패했습니다.",
+        },
+        { status: noColumn ? 503 : 500 }
+      );
+    }
+    console.log(LOG_PREFIX, "7. assignments.started_at 업데이트 성공");
+  } else {
+    console.log(LOG_PREFIX, "6. 이미 최초 시청 기록됨, watch_starts만 누적");
   }
-  console.log(LOG_PREFIX, "7. assignments.started_at 업데이트 성공");
 
+  // 매 시청 시작마다 watch_starts에 1건씩 누적 (4시, 6시 들어올 때마다 목록에 추가)
   if (supabaseServiceKey) {
     const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
     const { error: insertErr } = await serviceSupabase
@@ -106,5 +108,5 @@ export async function POST(req: Request) {
     console.warn(LOG_PREFIX, "8. SUPABASE_SERVICE_ROLE_KEY 없음, watch_starts 미기록");
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, alreadyRecorded: !isFirstTime });
 }
