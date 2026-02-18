@@ -73,6 +73,8 @@ export default function AdminAssignPage() {
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
   /** 학생 목록 정렬: 기본(배정 순) | 학년별 | 반별 */
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
+  /** 학생 이름 검색어 */
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
   /** 시청 상세 모달에 표시할 배정 */
   const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentRow | null>(null);
   /** 우선 학습 / 스킵 방지 토글 로딩 */
@@ -108,6 +110,7 @@ export default function AdminAssignPage() {
       setWatchStartsOpen(false);
       return;
     }
+    console.log("[학습 시작 시간] 목록 보기 요청, assignmentId:", assignmentId);
     setWatchStartsOpen(true);
     setWatchStartsAssignmentId(assignmentId);
     setWatchStartsLoading(true);
@@ -117,11 +120,21 @@ export default function AdminAssignPage() {
       const headers: Record<string, string> = {};
       if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
       const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers, cache: "no-store" });
-      if (!res.ok) throw new Error("학습 시작 시간 목록을 불러오지 못했습니다.");
-      const json = (await res.json()) as { id: string; started_at: string }[];
-      setWatchStarts(json);
+      const data = (await res.json().catch(() => ({}))) as { error?: string } | { id: string; started_at: string }[];
+      if (!res.ok) {
+        const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
+        const message = errMsg ?? "학습 시작 시간 목록을 불러오지 못했습니다.";
+        console.error("[학습 시작 시간] API 실패:", res.status, message);
+        setWatchStartsError(message);
+        return;
+      }
+      const list = Array.isArray(data) ? data : [];
+      console.log("[학습 시작 시간] 로드 성공, 건수:", list.length);
+      setWatchStarts(list);
     } catch (err: unknown) {
-      setWatchStartsError(err instanceof Error ? err.message : "학습 시작 시간 목록을 불러오지 못했습니다.");
+      const message = err instanceof Error ? err.message : "학습 시작 시간 목록을 불러오지 못했습니다.";
+      console.error("[학습 시작 시간] 예외:", err);
+      setWatchStartsError(message);
     } finally {
       setWatchStartsLoading(false);
     }
@@ -305,6 +318,13 @@ export default function AdminAssignPage() {
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
+                <input
+                  type="text"
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                  placeholder="학생 이름 검색"
+                  className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-slate-500"
+                />
                 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">학생 정렬</span>
                 <button
                   type="button"
@@ -380,7 +400,24 @@ export default function AdminAssignPage() {
                         }
                         return 0;
                       });
-                return sortedEntries.map(([userId, list]) => {
+                const searchLower = studentSearchQuery.trim().toLowerCase();
+                const entriesToShow = searchLower
+                  ? sortedEntries.filter(([userId]) => {
+                      const s = students.find((st) => st.id === userId);
+                      return (
+                        (s?.full_name ?? "").toLowerCase().includes(searchLower) ||
+                        (s?.email ?? "").toLowerCase().includes(searchLower)
+                      );
+                    })
+                  : sortedEntries;
+                if (entriesToShow.length === 0) {
+                  return (
+                    <li className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
+                      {searchLower ? "검색 결과가 없습니다. 다른 이름으로 검색해 보세요." : "학생이 없습니다."}
+                    </li>
+                  );
+                }
+                return entriesToShow.map(([userId, list]) => {
                   const student = students.find((s) => s.id === userId);
                   const studentName = student?.full_name || student?.email || userId.slice(0, 8);
                   const gradeLabel = student?.grade ?? null;
@@ -737,9 +774,13 @@ export default function AdminAssignPage() {
                         watchStartsLoading ? (
                           <span className="text-sm text-slate-500 dark:text-slate-400">불러오는 중...</span>
                         ) : watchStartsError ? (
-                          <span className="text-sm text-red-600 dark:text-red-400">{watchStartsError}</span>
+                          <span className="text-sm text-red-600 dark:text-red-400" title={watchStartsError}>
+                            데이터 로딩 실패: {watchStartsError}
+                          </span>
                         ) : watchStarts.length === 0 ? (
-                          <span className="text-sm text-slate-500 dark:text-slate-400">학습 시작 기록이 없습니다.</span>
+                          <span className="text-sm text-slate-500 dark:text-slate-400" title="API는 성공했으나 목록이 비어 있음">
+                            학습 시작 기록이 없습니다. (DB에 기록된 시청 시작 이력 없음)
+                          </span>
                         ) : (
                           <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
                             {watchStarts.map((w) => (

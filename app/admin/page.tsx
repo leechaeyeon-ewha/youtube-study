@@ -85,6 +85,8 @@ export default function AdminDashboardPage() {
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
   /** 학생 목록 정렬 기준: 기본, 학년별, 반별 */
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
+  /** 학생 이름 검색어 */
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
 
   async function load() {
     if (!supabase) {
@@ -534,9 +536,15 @@ export default function AdminDashboardPage() {
     }
   }
 
-  const studentsFiltered = students.filter(
-    (s) => (s.enrollment_status ?? "enrolled") === enrollmentTab
-  );
+  const searchLower = studentSearchQuery.trim().toLowerCase();
+  const studentsFiltered = students
+    .filter((s) => (s.enrollment_status ?? "enrolled") === enrollmentTab)
+    .filter(
+      (s) =>
+        !searchLower ||
+        (s.full_name ?? "").toLowerCase().includes(searchLower) ||
+        (s.email ?? "").toLowerCase().includes(searchLower)
+    );
 
   const gradeOrder = ["중1", "중2", "중3", "고1", "고2", "고3"] as const;
   const gradeRank: Record<string, number> = gradeOrder.reduce(
@@ -739,6 +747,13 @@ export default function AdminDashboardPage() {
             학생 목록
           </h2>
           <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text"
+              value={studentSearchQuery}
+              onChange={(e) => setStudentSearchQuery(e.target.value)}
+              placeholder="학생 이름 검색"
+              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-slate-500"
+            />
             <button
               type="button"
               onClick={() => setEnrollmentTab("enrolled")}
@@ -791,9 +806,11 @@ export default function AdminDashboardPage() {
         <div className="divide-y divide-slate-100 dark:divide-zinc-700">
           {studentsSorted.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
-              {enrollmentTab === "enrolled"
-                ? "재원생이 없습니다. 위에서 학생을 등록해 주세요."
-                : "퇴원생이 없습니다."}
+              {studentSearchQuery.trim()
+                ? "검색 결과가 없습니다. 다른 이름으로 검색해 보세요."
+                : enrollmentTab === "enrolled"
+                  ? "재원생이 없습니다. 위에서 학생을 등록해 주세요."
+                  : "퇴원생이 없습니다."}
             </div>
           ) : (
             studentsSorted.map((s) => (

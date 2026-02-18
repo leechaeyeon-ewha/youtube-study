@@ -40,19 +40,49 @@ export default function WatchPage() {
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** 학습 시작 시간(started_at) 기록 실패 시 화면에 잠깐 띄울 메시지 */
+  const [startedAtToast, setStartedAtToast] = useState<string | null>(null);
 
   /** 이미 최초 시청 시작 기록을 요청한 assignment id 집합 (중복·부하 방지) */
   const recordedAssignmentIdsRef = useRef<Set<string>>(new Set());
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** 진도 1% 이상이 되었을 때 한 번만 호출: assignments.started_at 조건부 업데이트 */
   const handleRecordStartedAt = useCallback(async () => {
     const id = assignmentId as string | null;
-    if (!id || !supabase) return;
-    if (recordedAssignmentIdsRef.current.has(id)) return;
+
+    console.log("[started_at] 1. 재생 감지됨 (started_at 기록 트리거)");
+    console.log("[started_at] 2. assignmentId 유효 여부:", !!id, "값:", id ?? "(null)");
+
+    if (!id || !supabase) {
+      console.warn("[started_at] 중단: assignmentId 없음 또는 supabase 없음");
+      return;
+    }
+    if (recordedAssignmentIdsRef.current.has(id)) {
+      console.log("[started_at] 이미 이 배정에 대해 기록 요청함, 스킵");
+      return;
+    }
     recordedAssignmentIdsRef.current.add(id);
 
+    console.log("[started_at] 3. session 확인 중...");
+    let session: { access_token?: string } | null = null;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const result = await supabase.auth.getSession();
+      session = result.data?.session ?? null;
+      console.log("[started_at] 4. session 존재:", !!session, ", token 있음:", !!session?.access_token);
+    } catch (e) {
+      console.error("[started_at] getSession 예외:", e);
+      setStartedAtToast("로그인 세션 확인 실패");
+      recordedAssignmentIdsRef.current.delete(id);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
+      return;
+    }
+
+    console.log("[started_at] 5. DB 업데이트 시도 중... (POST /api/watch-start)");
+    console.log("[started_at] 6. 배정(assignment) 행 존재: 시청 페이지 진입 시 이미 조회됨 → 현재 페이지면 행 존재함");
+
+    try {
       const res = await fetch("/api/watch-start", {
         method: "POST",
         headers: {
@@ -61,16 +91,34 @@ export default function WatchPage() {
         },
         body: JSON.stringify({ assignmentId: id }),
       });
+
+      const data = await res.json().catch(() => ({})) as { error?: string; ok?: boolean; alreadyRecorded?: boolean };
+
       if (!res.ok) {
+        console.error("[started_at] API 응답 실패:", res.status, data);
+        const errMsg = (data as { error?: string }).error ?? "시작 시간 기록에 실패했습니다.";
+        setStartedAtToast(errMsg);
         recordedAssignmentIdsRef.current.delete(id);
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
+        return;
       }
-    } catch {
+
+      console.log("[started_at] 7. 성공:", data.alreadyRecorded ? "이미 기록됨" : "새로 기록됨");
+    } catch (e) {
+      console.error("[started_at] fetch 예외:", e);
+      setStartedAtToast("시작 시간 기록 중 오류가 발생했습니다.");
       recordedAssignmentIdsRef.current.delete(id);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
     }
   }, [assignmentId]);
 
   useEffect(() => {
     setMounted(true);
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -189,6 +237,16 @@ export default function WatchPage() {
       >
         ← 목록
       </Link>
+
+      {/* 학습 시작 시간 기록 실패 시 화면 토스트 */}
+      {startedAtToast && (
+        <div
+          className="fixed bottom-6 left-4 right-4 z-30 rounded-lg bg-red-600 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:max-w-md sm:-translate-x-1/2"
+          role="alert"
+        >
+          {startedAtToast}
+        </div>
+      )}
     </div>
   );
 }
