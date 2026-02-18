@@ -23,6 +23,8 @@ interface AssignmentRow {
   progress_percent: number;
   is_visible?: boolean;
   is_weekly_assignment?: boolean;
+   /** 우선 학습(오늘의 미션) 여부 */
+  is_priority?: boolean;
   videos: {
     id: string;
     title: string;
@@ -223,7 +225,7 @@ export default function StudentPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id, course_id, courses(id, title))")
+        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, videos(id, title, video_id, course_id, courses(id, title))")
         .eq("user_id", user.id);
 
       if (cancelled) return;
@@ -304,6 +306,8 @@ export default function StudentPage() {
       </div>
     );
   }
+
+  const priorityAssignments = assignments.filter((a) => a.is_priority);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4 dark:bg-zinc-950">
@@ -602,27 +606,70 @@ export default function StudentPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {playlists.map((playlist) => (
-              <Link
-                key={playlist.id}
-                href={`/student/playlist/${encodeURIComponent(playlist.id)}`}
-                className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
-              >
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
-                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                  </svg>
-                </div>
-                <h2 className="font-semibold text-slate-900 dark:text-white line-clamp-2">
-                  {playlist.title}
+          <>
+            {priorityAssignments.length > 0 && (
+              <section className="mb-8 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm dark:border-amber-700 dark:bg-amber-900/20">
+                <h2 className="mb-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+                  오늘의 미션 · <span className="font-bold">우선 학습</span>
                 </h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  영상 {playlist.videoCount}개
+                <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
+                  원장님이 지정한 핵심 영상입니다. 먼저 시청해 주세요.
                 </p>
-              </Link>
-            ))}
-          </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {priorityAssignments.map((a) => {
+                    const v = a.videos;
+                    if (!v) return null;
+                    return (
+                      <Link
+                        key={a.id}
+                        href={`/watch/${encodeURIComponent(a.id)}`}
+                        className="flex flex-col rounded-xl border border-amber-200 bg-white/90 p-3 shadow-sm transition hover:border-amber-300 hover:shadow-md dark:border-amber-800 dark:bg-zinc-900"
+                      >
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white">
+                            우선 학습
+                          </span>
+                          {a.is_weekly_assignment && (
+                            <span className="inline-flex items-center rounded-full bg-emerald-500/90 px-2 py-0.5 text-[11px] font-semibold text-white">
+                              주간 과제
+                            </span>
+                          )}
+                        </div>
+                        <p className="line-clamp-2 text-sm font-medium text-slate-900 dark:text-slate-50">
+                          {v.title}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          진도 {a.progress_percent.toFixed(1)}%
+                        </p>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {playlists.map((playlist) => (
+                <Link
+                  key={playlist.id}
+                  href={`/student/playlist/${encodeURIComponent(playlist.id)}`}
+                  className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
+                >
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                  </div>
+                  <h2 className="font-semibold text-slate-900 dark:text-white line-clamp-2">
+                    {playlist.title}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    영상 {playlist.videoCount}개
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </>
         )}
           </>
         )}

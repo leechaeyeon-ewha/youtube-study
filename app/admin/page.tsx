@@ -13,6 +13,8 @@ interface Profile {
   is_report_enabled: boolean;
   parent_phone: string | null;
   class_id: string | null;
+   /** 학년 (중1~고3). 없으면 null */
+  grade?: string | null;
   enrollment_status?: "enrolled" | "withdrawn";
 }
 
@@ -105,6 +107,8 @@ export default function AdminDashboardPage() {
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
   /** 시청 상세 모달: 최초 시청 시작 시간 등 표시 */
   const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentWithVideo | null>(null);
+  /** 학생 목록 정렬 기준: 기본, 학년별, 반별 */
+  const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
 
   async function load() {
     if (!supabase) {
@@ -581,6 +585,19 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function handleStudentGradeChange(studentId: string, grade: string | null) {
+    if (!supabase) return;
+    try {
+      await supabase.from("profiles").update({ grade: grade || null }).eq("id", studentId);
+      // 로컬 상태도 즉시 반영
+      setStudents((prev) =>
+        prev.map((s) => (s.id === studentId ? { ...s, grade: grade || null } : s))
+      );
+    } catch {
+      // 무시 (간단한 편집 기능이므로 알림만 없어도 무방)
+    }
+  }
+
   function formatLastWatched(at: string | null) {
     if (!at) return "-";
     const d = new Date(at);
@@ -595,6 +612,34 @@ export default function AdminDashboardPage() {
   const studentsFiltered = students.filter(
     (s) => (s.enrollment_status ?? "enrolled") === enrollmentTab
   );
+
+  const gradeOrder = ["중1", "중2", "중3", "고1", "고2", "고3"] as const;
+  const gradeRank: Record<string, number> = gradeOrder.reduce(
+    (acc, g, idx) => ({ ...acc, [g]: idx }),
+    {} as Record<string, number>
+  );
+
+  const getClassTitle = (classId: string | null) => {
+    if (!classId) return "";
+    const found = classes.find((c) => c.id === classId);
+    return found?.title ?? "";
+  };
+
+  const studentsSorted = [...studentsFiltered].sort((a, b) => {
+    if (studentSort === "grade") {
+      const ra = gradeRank[a.grade ?? ""] ?? 999;
+      const rb = gradeRank[b.grade ?? ""] ?? 999;
+      if (ra !== rb) return ra - rb;
+      return (a.full_name ?? "").localeCompare(b.full_name ?? "");
+    }
+    if (studentSort === "class") {
+      const ca = getClassTitle(a.class_id);
+      const cb = getClassTitle(b.class_id);
+      if (ca !== cb) return ca.localeCompare(cb);
+      return (a.full_name ?? "").localeCompare(b.full_name ?? "");
+    }
+    return 0;
+  });
 
   if (loading) {
     return (
@@ -765,7 +810,7 @@ export default function AdminDashboardPage() {
           <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
             학생 목록
           </h2>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={() => setEnrollmentTab("enrolled")}
@@ -788,23 +833,61 @@ export default function AdminDashboardPage() {
             >
               퇴원생
             </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400">정렬 기준</span>
+              <button
+                type="button"
+                onClick={() => setStudentSort("grade")}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  studentSort === "grade"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                }`}
+              >
+                학년별
+              </button>
+              <button
+                type="button"
+                onClick={() => setStudentSort("class")}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  studentSort === "class"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                }`}
+              >
+                반별
+              </button>
+            </div>
           </div>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-zinc-700">
-          {studentsFiltered.length === 0 ? (
+          {studentsSorted.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
               {enrollmentTab === "enrolled"
                 ? "재원생이 없습니다. 위에서 학생을 등록해 주세요."
                 : "퇴원생이 없습니다."}
             </div>
           ) : (
-            studentsFiltered.map((s) => (
+            studentsSorted.map((s) => (
               <div key={s.id} className="px-6 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-900 dark:text-white">
                       {s.full_name || s.email || s.id.slice(0, 8)}
                     </span>
+                    <select
+                      value={s.grade ?? ""}
+                      onChange={(e) => handleStudentGradeChange(s.id, e.target.value || null)}
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                    >
+                      <option value="">학년 선택</option>
+                      <option value="중1">중1</option>
+                      <option value="중2">중2</option>
+                      <option value="중3">중3</option>
+                      <option value="고1">고1</option>
+                      <option value="고2">고2</option>
+                      <option value="고3">고3</option>
+                    </select>
                     <select
                       value={s.class_id ?? ""}
                       onChange={(e) => handleStudentClassChange(s.id, e.target.value || null)}

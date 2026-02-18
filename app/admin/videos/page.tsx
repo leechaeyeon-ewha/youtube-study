@@ -61,6 +61,7 @@ export default function AdminVideosPage() {
   const [assignClassId, setAssignClassId] = useState("");
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [assignPriority, setAssignPriority] = useState(false);
 
   const [settingsTarget, setSettingsTarget] = useState<"all" | "class" | "student">("all");
   const [settingsClassId, setSettingsClassId] = useState("");
@@ -554,6 +555,7 @@ export default function AdminVideosPage() {
             last_position: 0,
             is_visible: true,
             is_weekly_assignment: false,
+            is_priority: assignPriority,
           });
           if (!error) added += 1;
         }
@@ -563,6 +565,7 @@ export default function AdminVideosPage() {
       setAssignModalOpen(false);
       setAssignClassId("");
       setAssignStudentIds([]);
+      setAssignPriority(false);
       loadVideos();
     } catch (err: unknown) {
       setAssignMessage({ type: "error", text: err instanceof Error ? err.message : "할당 실패" });
@@ -1109,6 +1112,20 @@ export default function AdminVideosPage() {
               <label className="flex cursor-pointer items-center gap-2">
                 <input type="radio" name="assignTarget" checked={assignTarget === "student"} onChange={() => setAssignTarget("student")} className="text-indigo-600" />
                 학생 선택
+              </label>
+            </div>
+            <div className="mb-4">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={assignPriority}
+                  onChange={(e) => setAssignPriority(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>
+                  이 영상을 <span className="font-semibold text-indigo-600 dark:text-indigo-400">우선 학습</span>으로 표시
+                  <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">(학생 화면 상단에 [우선 학습] 배지로 노출)</span>
+                </span>
               </label>
             </div>
             {assignTarget === "class" && (

@@ -11,6 +11,7 @@ interface AssignmentRow {
   progress_percent: number;
   last_position: number;
   last_watched_at: string | null;
+  is_priority?: boolean;
   // Supabase 타입 상 videos/profiles가 배열로 잡힐 수 있어서 단일·배열 모두 허용
   videos: { id: string; title: string; video_id: string } | { id: string; title: string; video_id: string }[] | null;
   profiles:
@@ -46,7 +47,7 @@ export default function AdminAssignPage() {
     }
     const { data, error } = await supabase
       .from("assignments")
-      .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id), profiles(full_name, email)")
+      .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, is_priority, videos(id, title, video_id), profiles(full_name, email)")
       .order("created_at", { ascending: false });
     const nextAssignments = error ? [] : ((data ?? []) as unknown) as AssignmentRow[];
     setAssignments(nextAssignments);

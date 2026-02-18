@@ -406,9 +406,15 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           ref={containerRef}
           className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
-        {/* 유튜브 로고 클릭 시 유튜브로 이동하는 것 방지: 오른쪽 하단 클릭 차단 */}
+        {/* 좌상단: 재생/로고 아이콘 클릭 시 유튜브로 이동 방지 */}
         <div
-          className="absolute bottom-0 right-0 z-10 h-14 w-32 cursor-default"
+          className="absolute left-0 top-0 z-10 h-16 w-24 cursor-default"
+          title="진도 저장을 위해 이 페이지에서 시청해 주세요."
+          aria-hidden
+        />
+        {/* 우하단: 유튜브 로고·재생목록 아이콘 클릭 시 유튜브로 이동 방지 */}
+        <div
+          className="absolute bottom-0 right-0 z-10 h-20 w-40 cursor-default"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />

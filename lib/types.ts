@@ -10,6 +10,8 @@ export interface Profile {
   is_report_enabled?: boolean;
   parent_phone?: string | null;
   class_id?: string | null;
+  /** 학년 (중1~고3). 없으면 null/undefined */
+  grade?: string | null;
 }
 
 export interface Course {
@@ -45,6 +47,8 @@ export interface Assignment {
   progress_percent: number;
   last_position?: number;
   last_watched_at?: string | null;
+  /** 우선 학습(오늘의 미션) 여부 */
+  is_priority?: boolean;
   videos?: Video | null;
 }
 
