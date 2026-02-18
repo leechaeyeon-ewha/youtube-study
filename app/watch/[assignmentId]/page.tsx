@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -40,6 +40,34 @@ export default function WatchPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /** 이미 최초 시청 시작 기록을 요청한 assignment id 집합 (중복·부하 방지) */
+  const recordedAssignmentIdsRef = useRef<Set<string>>(new Set());
+
+  /** 진도 1% 이상이 되었을 때 한 번만 호출: assignments.started_at 조건부 업데이트 */
+  const handleRecordStartedAt = useCallback(async () => {
+    const id = assignmentId as string | null;
+    if (!id) return;
+    if (recordedAssignmentIdsRef.current.has(id)) return;
+    recordedAssignmentIdsRef.current.add(id);
+
+    try {
+      const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+      const res = await fetch("/api/watch-start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ assignmentId: id }),
+      });
+      if (!res.ok) {
+        recordedAssignmentIdsRef.current.delete(id);
+      }
+    } catch {
+      recordedAssignmentIdsRef.current.delete(id);
+    }
+  }, [assignmentId]);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -73,7 +101,7 @@ export default function WatchPage() {
       const { data, error: fetchError } = await supabase
         .from("assignments")
         .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
-        .eq("id", id)
+        .eq("id", id as string)
         .eq("user_id", user.id)
         .single();
 
@@ -135,9 +163,10 @@ export default function WatchPage() {
           <div className="watch-video-wrap w-full">
             <YoutubePlayer
               videoId={video.video_id}
-              assignmentId={assignment.id}
+              assignmentId={assignment.id as string}
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
               preventSkip={assignment.prevent_skip !== false}
+              onFirstProgress={handleRecordStartedAt}
             />
           </div>
         </div>

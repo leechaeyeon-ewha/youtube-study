@@ -29,6 +29,7 @@ interface AssignmentWithVideo {
   progress_percent: number;
   last_position: number;
   last_watched_at: string | null;
+  started_at?: string | null;
   prevent_skip?: boolean;
   videos:
     | { id: string; title: string; video_id: string; course_id: string | null; courses?: { id: string; title: string } | { id: string; title: string }[] | null }
@@ -102,6 +103,8 @@ export default function AdminDashboardPage() {
   const [assignPlaylistCourseKey, setAssignPlaylistCourseKey] = useState<string | null>(null);
   const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
+  /** 시청 상세 모달: 최초 시청 시작 시간 등 표시 */
+  const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentWithVideo | null>(null);
 
   async function load() {
     if (!supabase) {
@@ -126,7 +129,7 @@ export default function AdminDashboardPage() {
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
@@ -142,7 +145,7 @@ export default function AdminDashboardPage() {
     } else if (assignmentsRes.error) {
       const fallback = await supabase
         .from("assignments")
-        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, videos(id, title, video_id, course_id, courses(id, title))")
+        .select("id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, videos(id, title, video_id, course_id, courses(id, title))")
         .order("last_watched_at", { ascending: false });
       if (!fallback.error && fallback.data) {
         (fallback.data as AssignmentWithVideo[]).forEach((a) => {
@@ -582,6 +585,11 @@ export default function AdminDashboardPage() {
     if (!at) return "-";
     const d = new Date(at);
     return d.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+  }
+
+  function formatStartedAt(at: string | null | undefined) {
+    if (!at) return "-";
+    return new Date(at).toLocaleString("ko-KR");
   }
 
   const studentsFiltered = students.filter(
@@ -1151,6 +1159,7 @@ export default function AdminDashboardPage() {
                                 <th className="px-4 py-2 pr-4">영상</th>
                                 <th className="px-4 py-2 pr-4">진도율</th>
                                 <th className="px-4 py-2 pr-4">마지막 시청</th>
+                                <th className="px-4 py-2 pr-4">상세</th>
                                 <th className="px-4 py-2">스킵 방지</th>
                               </tr>
                             </thead>
@@ -1170,6 +1179,15 @@ export default function AdminDashboardPage() {
                                     </td>
                                     <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
                                       {formatLastWatched(a.last_watched_at)}
+                                    </td>
+                                    <td className="px-4 py-2 pr-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setDetailModalAssignment(a)}
+                                        className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                      >
+                                        상세
+                                      </button>
                                     </td>
                                     <td className="px-4 py-2">
                                       <button
@@ -1210,6 +1228,48 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </section>
+
+      {/* 시청 상세 모달: 최초 시청 시작 시간 등 */}
+      {detailModalAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">시청 상세</h3>
+            {(() => {
+              const a = detailModalAssignment;
+              const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+              return (
+                <dl className="space-y-3 text-sm">
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">영상</dt>
+                    <dd className="font-medium text-slate-800 dark:text-slate-200">{video?.title ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">진도율</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{a.progress_percent.toFixed(1)}%</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">마지막 시청</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{formatLastWatched(a.last_watched_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">최초 시청 시작 시간</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">{formatStartedAt(a.started_at)}</dd>
+                  </div>
+                </dl>
+              );
+            })()}
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDetailModalAssignment(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

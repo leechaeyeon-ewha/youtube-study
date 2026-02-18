@@ -9,7 +9,13 @@ interface ReportData {
   studentName?: string;
   weeklyCompletion?: number;
   monthlyCompletion?: number;
-  recentVideos?: { title: string; is_completed: boolean; progress_percent: number; last_watched_at: string | null }[];
+  recentVideos?: {
+    title: string;
+    is_completed: boolean;
+    progress_percent: number;
+    last_watched_at: string | null;
+    started_at: string | null;
+  }[];
   comment?: string;
 }
 
@@ -177,6 +183,11 @@ export default function ReportPage() {
                         })
                       : "-"}
                   </span>
+                  {v.started_at != null && v.started_at !== "" && (
+                    <span className="w-full text-xs text-slate-500 dark:text-slate-400">
+                      최초 시청 시작 시간: {new Date(v.started_at).toLocaleString("ko-KR")}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

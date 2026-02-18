@@ -3,9 +3,8 @@ import { NextResponse } from "next/server";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-/** 학생이 영상 시청 페이지에 들어와 시청을 시작한 시각 기록 (한 번 로드할 때마다 1건) */
+/** 진도 1% 이상이 된 시점에 한 번만 assignments.started_at 기록 (이미 있으면 덮어쓰지 않음) */
 export async function POST(req: Request) {
   const authHeader = req.headers.get("authorization");
   const token = authHeader?.replace(/^Bearer\s+/i, "");
@@ -14,7 +13,9 @@ export async function POST(req: Request) {
   }
 
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser(token);
   if (!user) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
@@ -30,10 +31,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "assignmentId가 필요합니다." }, { status: 400 });
   }
 
-  const anon = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: assignment, error: fetchErr } = await anon
+  const { data: assignment, error: fetchErr } = await supabase
     .from("assignments")
-    .select("id, user_id")
+    .select("id, user_id, started_at")
     .eq("id", assignmentId)
     .eq("user_id", user.id)
     .single();
@@ -42,24 +42,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "해당 과제를 찾을 수 없습니다." }, { status: 403 });
   }
 
-  if (!serviceRoleKey) {
-    return NextResponse.json({ error: "서버 설정이 없습니다." }, { status: 500 });
+  if (assignment.started_at != null && assignment.started_at !== "") {
+    return NextResponse.json({ ok: true, alreadyRecorded: true });
   }
-  const admin = createClient(supabaseUrl, serviceRoleKey);
-  const { error: insertErr } = await admin.from("watch_starts").insert({
-    assignment_id: assignmentId,
-  });
 
-  if (insertErr) {
-    const msg = insertErr.message ?? "";
-    const tableMissing = msg.includes("watch_starts") || msg.includes("does not exist") || insertErr.code === "42P01";
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("assignments")
+    .update({ started_at: now })
+    .eq("id", assignmentId as string)
+    .eq("user_id", user.id)
+    .is("started_at", null);
+
+  if (updateErr) {
+    const msg = updateErr.message ?? "";
+    const noColumn = msg.includes("started_at") || updateErr.code === "42703";
     return NextResponse.json(
       {
-        error: tableMissing
-          ? "watch_starts 테이블이 없습니다. Supabase 대시보드 → SQL Editor에서 supabase/migration_watch_starts.sql 내용을 실행해 주세요."
+        error: noColumn
+          ? "started_at 컬럼이 없습니다. Supabase에서 supabase/migration_assignments_started_at.sql 을 실행해 주세요."
           : "기록에 실패했습니다.",
       },
-      { status: tableMissing ? 503 : 500 }
+      { status: noColumn ? 503 : 500 }
     );
   }
   return NextResponse.json({ ok: true });

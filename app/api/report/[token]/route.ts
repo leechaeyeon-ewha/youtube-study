@@ -48,7 +48,7 @@ export async function GET(
 
   const { data: assignments } = await supabase
     .from("assignments")
-    .select("id, is_completed, progress_percent, last_watched_at, videos(id, title)")
+    .select("id, is_completed, progress_percent, last_watched_at, started_at, videos(id, title)")
     .eq("user_id", profile.id);
 
   const list = (assignments ?? []) as {
@@ -56,6 +56,7 @@ export async function GET(
     is_completed: boolean;
     progress_percent: number;
     last_watched_at: string | null;
+    started_at: string | null;
     videos: { id: string; title: string }[] | null;
   }[];
 
@@ -90,6 +91,7 @@ export async function GET(
         is_completed: Boolean(a.is_completed),
         progress_percent: safePercent(a.progress_percent),
         last_watched_at: a.last_watched_at,
+        started_at: a.started_at ?? null,
       };
     })
     .sort((x, y) => (y.last_watched_at ?? "").localeCompare(x.last_watched_at ?? ""))

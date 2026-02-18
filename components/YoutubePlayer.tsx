@@ -49,6 +49,8 @@ interface Props {
   initialPosition?: number;
   /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 */
   preventSkip?: boolean;
+  /** 진도율이 1% 이상이 되는 순간 한 번만 호출 (최초 시청 시작 기록용) */
+  onFirstProgress?: () => void;
 }
 
 function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
@@ -78,7 +80,9 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
   });
 }
 
-export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true }: Props) {
+const FIRST_PROGRESS_THRESHOLD = 1; // 1% 이상이면 최초 시청 시작으로 간주
+
+export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true, onFirstProgress }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -103,6 +107,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const maxWatchedWhenHiddenRef = useRef(initialPosition);
   /** 탭이 방금 visible로 바뀐 직후 한 번만 배경 재생분을 제외하고 보정 */
   const justBecameVisibleRef = useRef(false);
+  /** 진도 1% 이상 시 onFirstProgress 한 번만 호출했는지 */
+  const hasFiredFirstProgressRef = useRef(false);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -328,6 +334,15 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         const percent = duration > 0 ? current / duration : 0;
         if (!Number.isFinite(percent) || percent < 0 || percent > 1) return;
         setProgressPercent(percent * 100);
+
+        if (!hasFiredFirstProgressRef.current && percent * 100 >= FIRST_PROGRESS_THRESHOLD) {
+          hasFiredFirstProgressRef.current = true;
+          try {
+            onFirstProgress?.();
+          } catch {
+            // 콜백 예외는 플레이어 동작에 영향 주지 않음
+          }
+        }
 
         if (percent >= COMPLETE_THRESHOLD) {
           saveProgress(100, true, current);
