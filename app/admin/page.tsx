@@ -159,7 +159,7 @@ export default function AdminDashboardPage() {
       supabase
         .from("assignments")
         .select(ADMIN_ASSIGNMENTS_SELECT)
-        .order("last_watched_at", { ascending: false }),
+        .order("created_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
 
@@ -175,7 +175,7 @@ export default function AdminDashboardPage() {
       const fallback = await supabase
         .from("assignments")
         .select(ADMIN_ASSIGNMENTS_SELECT)
-        .order("last_watched_at", { ascending: false });
+        .order("created_at", { ascending: false });
       if (!fallback.error && fallback.data) {
         (fallback.data as AssignmentWithVideo[]).forEach((a) => {
           if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];

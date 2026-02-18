@@ -39,12 +39,20 @@ interface StudentSummary {
   id: string;
   full_name: string | null;
   email: string | null;
+  grade?: string | null;
+  class_id?: string | null;
+}
+
+interface ClassRow {
+  id: string;
+  title: string;
 }
 
 const ASSIGN_CACHE_TTL_MS = 30 * 1000;
 let assignPageCache: {
   assignments: AssignmentRow[];
   students: StudentSummary[];
+  classes: ClassRow[];
   at: number;
 } | null = null;
 
@@ -59,6 +67,8 @@ export default function AdminAssignPage() {
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
   /** 학생 요약 정보 (이름/이메일) — /api/admin/students 기반 */
   const [students, setStudents] = useState<StudentSummary[]>([]);
+  /** 반 목록 (id -> title 매핑용) */
+  const [classes, setClasses] = useState<ClassRow[]>([]);
   /** 학생별 다중 선택된 배정 ID 목록 */
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
 
@@ -71,6 +81,7 @@ export default function AdminAssignPage() {
     if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
       setAssignments(assignPageCache.assignments);
       setStudents(assignPageCache.students);
+      setClasses(assignPageCache.classes);
       setLoading(false);
       return;
     }
@@ -80,23 +91,26 @@ export default function AdminAssignPage() {
       ? { Authorization: `Bearer ${session.access_token}` }
       : {};
 
-    const [studentsRes, assignmentsRes] = await Promise.all([
+    const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select(ADMIN_ASSIGNMENTS_SELECT)
         .order("created_at", { ascending: false }),
+      supabase.from("classes").select("id, title").order("title"),
     ]);
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as StudentSummary[]) : [];
     const nextAssignments = assignmentsRes.error
       ? []
       : (((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+    const nextClasses = classesRes.error ? [] : ((classesRes.data as ClassRow[]) ?? []);
 
     setStudents(nextStudents);
     setAssignments(nextAssignments);
+    setClasses(nextClasses);
     setLoading(false);
-    assignPageCache = { assignments: nextAssignments, students: nextStudents, at: Date.now() };
+    assignPageCache = { assignments: nextAssignments, students: nextStudents, classes: nextClasses, at: Date.now() };
   }
 
   function toggleSelectAssignment(userId: string, assignmentId: string) {
@@ -186,6 +200,11 @@ export default function AdminAssignPage() {
                 return Array.from(byStudent.entries()).map(([userId, list]) => {
                   const student = students.find((s) => s.id === userId);
                   const studentName = student?.full_name || student?.email || userId.slice(0, 8);
+                  const gradeLabel = student?.grade ?? null;
+                  const classTitle =
+                    student?.class_id != null
+                      ? classes.find((c) => c.id === student.class_id)?.title ?? null
+                      : null;
                   const isExpanded = expandedStudentId === userId;
                   return (
                     <li key={userId} className="bg-white dark:bg-zinc-900">
@@ -193,6 +212,12 @@ export default function AdminAssignPage() {
                         <span className="font-medium text-slate-900 dark:text-white">
                           {studentName}
                         </span>
+                        {(gradeLabel || classTitle) && (
+                          <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                            {gradeLabel ?? "학년 미지정"}
+                            {classTitle ? ` · ${classTitle}` : ""}
+                          </span>
+                        )}
                         <span className="text-sm text-slate-500 dark:text-slate-400">
                           배정 영상 {list.length}개
                         </span>
