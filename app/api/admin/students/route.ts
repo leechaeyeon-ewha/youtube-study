@@ -210,6 +210,10 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "대상 학생을 한 명만 지정해 주세요." }, { status: 400 });
   }
 
+  const enrollmentStatus = body.enrollment_status;
+  const status =
+    enrollmentStatus === "withdrawn" ? "withdrawn" : "enrolled";
+
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data: profile } = await supabase
     .from("profiles")

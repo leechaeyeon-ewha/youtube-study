@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ADMIN_ASSIGNMENTS_SELECT } from "@/lib/admin-assignments";
 import { supabase } from "@/lib/supabase";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -142,9 +143,7 @@ export default function AdminDashboardPage() {
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
-        .select(
-          "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))",
-        )
+        .select(ADMIN_ASSIGNMENTS_SELECT)
         .order("last_watched_at", { ascending: false }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
@@ -153,22 +152,17 @@ export default function AdminDashboardPage() {
     let nextByUser: Record<string, AssignmentWithVideo[]> = {};
     if (!assignmentsRes.error && assignmentsRes.data != null) {
       const list = ((assignmentsRes.data ?? []) as unknown) as AssignmentWithVideo[];
-      const visibleList = list.filter((a) => a.is_visible !== false);
-      visibleList.forEach((a) => {
+      list.forEach((a) => {
         if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
         nextByUser[a.user_id].push(a);
       });
     } else if (assignmentsRes.error) {
       const fallback = await supabase
         .from("assignments")
-        .select(
-          "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))",
-        )
+        .select(ADMIN_ASSIGNMENTS_SELECT)
         .order("last_watched_at", { ascending: false });
       if (!fallback.error && fallback.data) {
-        ((fallback.data as unknown) as AssignmentWithVideo[])
-          .filter((a) => a.is_visible !== false)
-          .forEach((a) => {
+        (fallback.data as AssignmentWithVideo[]).forEach((a) => {
           if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
           nextByUser[a.user_id].push(a);
         });
@@ -227,6 +221,10 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     load();
+    return () => {
+      // 배정목록 탭으로 갔다가 돌아올 때마다 최신 데이터 로드하도록 캐시 비우기
+      dashboardCache = null;
+    };
   }, []);
 
   if (!mounted) return null;
@@ -502,7 +500,8 @@ export default function AdminDashboardPage() {
         },
         body: JSON.stringify({ user_id: targetId, enrollment_status: "withdrawn" }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      const data = text ? (JSON.parse(text) as { error?: string }) : {};
       if (!res.ok) {
         const msg = data.error || "퇴원 처리 실패";
         if (typeof msg === "string" && msg.includes("enrollment_status")) {
@@ -534,8 +533,10 @@ export default function AdminDashboardPage() {
         },
         body: JSON.stringify({ user_id: userId, enrollment_status: "enrolled" }),
       });
+      const resText = await res.text();
+      const reEnrollData = resText ? (JSON.parse(resText) as { error?: string }) : {};
       if (!res.ok) {
-        const data = await res.json();
+        const data = reEnrollData;
         const msg = data.error || "재원 복귀 실패";
         if (typeof msg === "string" && msg.includes("enrollment_status")) {
           setShowMigrationModal(true);
