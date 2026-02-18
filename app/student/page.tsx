@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { ASSIGNMENT_SELECT_STUDENT_LIST } from "@/lib/assignments";
 import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -225,7 +226,7 @@ export default function StudentPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, videos(id, title, video_id, course_id, courses(id, title))")
+        .select(ASSIGNMENT_SELECT_STUDENT_LIST)
         .eq("user_id", user.id);
 
       if (cancelled) return;
@@ -240,15 +241,20 @@ export default function StudentPage() {
         return;
       }
 
-      const list = data as AssignmentRow[];
+      const list = (data ?? []) as AssignmentRow[];
       const visible = list.filter((a) => a.is_visible !== false);
       setAssignments(visible);
       setLoading(false);
     }
 
     load();
-    return () => { cancelled = true; };
-    // 마운트 시 한 번만 실행. router 의존 시 재실행으로 루프 가능성 있음.
+    const onFocus = () => { load(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+    // 마운트 시 한 번만 실행. 포커스 시 재조회해 관리자 배정 해제 후 목록이 맞도록 함.
   }, []);
 
   useEffect(() => {

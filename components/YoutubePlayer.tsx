@@ -133,6 +133,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       if (!Number.isFinite(lastPosition) || lastPosition < 0) return;
 
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
         await supabase
           .from("assignments")
           .update({
@@ -141,7 +143,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             last_position: lastPosition,
             last_watched_at: now,
           })
-          .eq("id", assignmentId);
+          .eq("id", assignmentId)
+          .eq("user_id", user.id);
       } catch (_: unknown) {
         // ignore (updated_at 컬럼 없을 수 있음)
       }

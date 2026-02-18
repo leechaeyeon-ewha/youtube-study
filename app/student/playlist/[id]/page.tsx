@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { ASSIGNMENT_SELECT_STUDENT_LIST } from "@/lib/assignments";
 import { getThumbnailUrl } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -51,6 +52,7 @@ export default function StudentPlaylistPage() {
       return;
     }
 
+    let cancelled = false;
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
@@ -60,9 +62,10 @@ export default function StudentPlaylistPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, is_visible, is_weekly_assignment, videos(id, title, video_id, course_id, courses(id, title))")
+        .select(ASSIGNMENT_SELECT_STUDENT_LIST)
         .eq("user_id", user?.id ?? "");
 
+      if (cancelled) return;
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
@@ -104,6 +107,12 @@ export default function StudentPlaylistPage() {
     }
 
     load();
+    const onFocus = () => { load(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, [playlistId]);
 
   if (!mounted) return null;

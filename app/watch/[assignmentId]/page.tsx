@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { ASSIGNMENT_SELECT_WATCH } from "@/lib/assignments";
 import YoutubePlayer from "@/components/YoutubePlayer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -46,12 +47,12 @@ export default function WatchPage() {
   /** 진도 1% 이상이 되었을 때 한 번만 호출: assignments.started_at 조건부 업데이트 */
   const handleRecordStartedAt = useCallback(async () => {
     const id = assignmentId as string | null;
-    if (!id) return;
+    if (!id || !supabase) return;
     if (recordedAssignmentIdsRef.current.has(id)) return;
     recordedAssignmentIdsRef.current.add(id);
 
     try {
-      const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/watch-start", {
         method: "POST",
         headers: {
@@ -74,23 +75,21 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (!assignmentId) {
-      console.error("[watch] assignmentId가 없거나 유효하지 않습니다.", params?.assignmentId);
-      setLoading(false);
       setError("잘못된 경로입니다.");
+      setLoading(false);
       return;
     }
-    const id: string = assignmentId;
     if (!supabase) {
       setError("Supabase가 설정되지 않았습니다.");
       setLoading(false);
       return;
     }
 
+    const id = assignmentId as string;
     let cancelled = false;
+
     async function load() {
-      const [{ data: { user } }] = await Promise.all([
-        supabase.auth.getUser(),
-      ]);
+      const { data: { user } } = await supabase.auth.getUser();
       if (cancelled) return;
       if (!user) {
         setLoading(false);
@@ -100,8 +99,8 @@ export default function WatchPage() {
 
       const { data, error: fetchError } = await supabase
         .from("assignments")
-        .select("id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)")
-        .eq("id", id as string)
+        .select(ASSIGNMENT_SELECT_WATCH)
+        .eq("id", id)
         .eq("user_id", user.id)
         .single();
 

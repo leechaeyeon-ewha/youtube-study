@@ -71,6 +71,8 @@ export default function AdminAssignPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   /** 학생별 다중 선택된 배정 ID 목록 */
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
+  /** 학생 목록 정렬: 기본(배정 순) | 학년별 | 반별 */
+  const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
   /** 시청 상세 모달에 표시할 배정 */
   const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentRow | null>(null);
   /** 우선 학습 / 스킵 방지 토글 로딩 */
@@ -114,7 +116,7 @@ export default function AdminAssignPage() {
       const { data: { session } } = await supabase.auth.getSession();
       const headers: Record<string, string> = {};
       if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers });
+      const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers, cache: "no-store" });
       if (!res.ok) throw new Error("학습 시작 시간 목록을 불러오지 못했습니다.");
       const json = (await res.json()) as { id: string; started_at: string }[];
       setWatchStarts(json);
@@ -125,20 +127,36 @@ export default function AdminAssignPage() {
     }
   }
 
+  /** 관리자가 배정을 수정한 뒤 학생 페이지 캐시 무효화 (즉시 갱신용) */
+  async function revalidateStudentPaths() {
+    if (!supabase) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+    try {
+      await fetch("/api/revalidate-student", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+    } catch {
+      // 무시: 학생 쪽은 포커스 시 재조회로 보정됨
+    }
+  }
+
   async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean | undefined) {
     if (!supabase) return;
     setSkipToggleAssignmentId(assignmentId);
     try {
       const { error } = await supabase.from("assignments").update({ prevent_skip: !currentPreventSkip }).eq("id", assignmentId);
       if (error) {
-        if (error.message?.includes("prevent_skip") || error.code === "42703") {
-          alert("스킵 방지 설정을 사용하려면 Supabase에서 prevent_skip 컬럼을 추가해 주세요. (supabase/migration_prevent_skip.sql)");
-        } else {
-          alert(error.message || "설정 변경에 실패했습니다.");
-        }
+        const msg = error.message?.includes("prevent_skip") || error.code === "42703"
+          ? "스킵 방지 설정을 사용하려면 Supabase에서 prevent_skip 컬럼을 추가해 주세요. (supabase/migration_prevent_skip.sql)"
+          : error.message || "설정 변경에 실패했습니다.";
+        alert(msg);
         return;
       }
       assignPageCache = null;
+      revalidateStudentPaths();
       await load();
     } finally {
       setSkipToggleAssignmentId(null);
@@ -151,14 +169,14 @@ export default function AdminAssignPage() {
     try {
       const { error } = await supabase.from("assignments").update({ is_priority: !currentPriority }).eq("id", assignmentId);
       if (error) {
-        if (error.message?.includes("is_priority") || error.code === "42703") {
-          alert("우선 학습 설정을 사용하려면 Supabase에서 is_priority 컬럼을 추가해 주세요. (supabase/migration_assignments_priority.sql)");
-        } else {
-          alert(error.message || "우선 학습 설정 변경에 실패했습니다.");
-        }
+        const msg = error.message?.includes("is_priority") || error.code === "42703"
+          ? "우선 학습 설정을 사용하려면 Supabase에서 is_priority 컬럼을 추가해 주세요. (supabase/migration_assignments_priority.sql)"
+          : error.message || "우선 학습 설정 변경에 실패했습니다.";
+        alert(msg);
         return;
       }
       assignPageCache = null;
+      revalidateStudentPaths();
       await load();
     } finally {
       setPriorityToggleAssignmentId(null);
@@ -185,7 +203,7 @@ export default function AdminAssignPage() {
       : {};
 
     const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
-      fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select(ADMIN_ASSIGNMENTS_SELECT)
@@ -194,9 +212,7 @@ export default function AdminAssignPage() {
     ]);
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as StudentSummary[]) : [];
-    const nextAssignments = assignmentsRes.error
-      ? []
-      : (((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
+    const nextAssignments = assignmentsRes.error ? [] : (((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
     const nextClasses = classesRes.error ? [] : ((classesRes.data as ClassRow[]) ?? []);
 
     setStudents(nextStudents);
@@ -222,7 +238,9 @@ export default function AdminAssignPage() {
     if (!confirm(`선택한 ${ids.length}개의 배정을 해제할까요?`)) return;
     await supabase.from("assignments").delete().in("id", ids);
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
-    load();
+    assignPageCache = null;
+    revalidateStudentPaths();
+    await load();
   }
 
   useEffect(() => {
@@ -255,9 +273,12 @@ export default function AdminAssignPage() {
   }
 
   async function handleUnassign(id: string) {
-    if (!supabase || !confirm("이 배정을 해제할까요?")) return;
+    if (!supabase) return;
+    if (!confirm("이 배정을 해제할까요?")) return;
     await supabase.from("assignments").delete().eq("id", id);
-    load();
+    assignPageCache = null;
+    revalidateStudentPaths();
+    await load();
   }
 
   return (
@@ -266,7 +287,7 @@ export default function AdminAssignPage() {
         배정 목록 · 진도 현황
       </h1>
       <p className="mb-8 text-slate-600 dark:text-slate-400">
-        학생별로 배정된 영상 목록과 진도를 확인하고, 필요 시 배정 해제할 수 있습니다.
+        학생별로 배정된 영상의 진도, 시청 상세, 우선 학습·스킵 방지 설정을 확인하고, 필요 시 배정 해제할 수 있습니다.
       </p>
 
       <section>
@@ -274,7 +295,7 @@ export default function AdminAssignPage() {
           배정 목록 · 진도 현황
         </h2>
         <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-          학생별로 배정된 영상을 확인하고, 배정 해제할 수 있습니다.
+          학생 정렬(기본/학년별/반별) 후 재생목록별로 진도 확인, 상세 보기, 우선 학습·스킵 방지 설정 및 배정 해제를 할 수 있습니다.
         </p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           {assignments.length === 0 ? (
@@ -282,7 +303,44 @@ export default function AdminAssignPage() {
               배정된 학습이 없습니다.
             </div>
           ) : (
-            <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+            <>
+              <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">학생 정렬</span>
+                <button
+                  type="button"
+                  onClick={() => setStudentSort("none")}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                    studentSort === "none"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                  }`}
+                >
+                  기본
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStudentSort("grade")}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                    studentSort === "grade"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                  }`}
+                >
+                  학년별
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStudentSort("class")}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                    studentSort === "class"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                  }`}
+                >
+                  반별
+                </button>
+              </div>
+              <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
               {(() => {
                 const byStudent = new Map<string, AssignmentRow[]>();
                 for (const a of assignments) {
@@ -290,7 +348,39 @@ export default function AdminAssignPage() {
                   list.push(a);
                   byStudent.set(a.user_id, list);
                 }
-                return Array.from(byStudent.entries()).map(([userId, list]) => {
+                const gradeOrder = ["중1", "중2", "중3", "고1", "고2", "고3"] as const;
+                const gradeRank: Record<string, number> = gradeOrder.reduce(
+                  (acc, g, idx) => ({ ...acc, [g]: idx }),
+                  {} as Record<string, number>
+                );
+                const getClassTitle = (classId: string | null) => {
+                  if (!classId) return "";
+                  return classes.find((c) => c.id === classId)?.title ?? "";
+                };
+                const entries = Array.from(byStudent.entries());
+                const sortedEntries =
+                  studentSort === "none"
+                    ? entries
+                    : [...entries].sort(([userIdA], [userIdB]) => {
+                        const studentA = students.find((s) => s.id === userIdA);
+                        const studentB = students.find((s) => s.id === userIdB);
+                        const nameA = studentA?.full_name ?? studentA?.email ?? userIdA;
+                        const nameB = studentB?.full_name ?? studentB?.email ?? userIdB;
+                        if (studentSort === "grade") {
+                          const ra = gradeRank[studentA?.grade ?? ""] ?? 999;
+                          const rb = gradeRank[studentB?.grade ?? ""] ?? 999;
+                          if (ra !== rb) return ra - rb;
+                          return String(nameA).localeCompare(String(nameB));
+                        }
+                        if (studentSort === "class") {
+                          const ca = getClassTitle(studentA?.class_id ?? null);
+                          const cb = getClassTitle(studentB?.class_id ?? null);
+                          if (ca !== cb) return ca.localeCompare(cb);
+                          return String(nameA).localeCompare(String(nameB));
+                        }
+                        return 0;
+                      });
+                return sortedEntries.map(([userId, list]) => {
                   const student = students.find((s) => s.id === userId);
                   const studentName = student?.full_name || student?.email || userId.slice(0, 8);
                   const gradeLabel = student?.grade ?? null;
@@ -599,6 +689,7 @@ export default function AdminAssignPage() {
                 });
               })()}
             </ul>
+            </>
           )}
         </div>
       </section>

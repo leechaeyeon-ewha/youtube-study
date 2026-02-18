@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-/** 진도 1% 이상이 된 시점에 한 번만 assignments.started_at 기록 (이미 있으면 덮어쓰지 않음) */
+/** 진도 1% 이상이 된 시점에 한 번만 assignments.started_at 기록 (이미 있으면 덮어쓰지 않음). 동시에 watch_starts 테이블에 학습 시작 시각 1건 INSERT (관리자 시청 상세에서 목록 표시용). */
 export async function POST(req: Request) {
   const authHeader = req.headers.get("authorization");
   const token = authHeader?.replace(/^Bearer\s+/i, "");
@@ -66,5 +67,14 @@ export async function POST(req: Request) {
       { status: noColumn ? 503 : 500 }
     );
   }
+
+  // 학습 시작 시각 목록(관리자 시청 상세용): watch_starts에 1건 INSERT. service role로 삽입해 RLS 영향 없이 기록.
+  if (supabaseServiceKey) {
+    const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
+    await serviceSupabase
+      .from("watch_starts")
+      .insert({ assignment_id: assignmentId, started_at: now });
+  }
+
   return NextResponse.json({ ok: true });
 }

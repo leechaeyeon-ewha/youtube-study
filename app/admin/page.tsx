@@ -587,6 +587,9 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
         학생 목록 · 영상 할당 · 모니터링
       </h1>
+      <p className="text-slate-600 dark:text-slate-400">
+        학생 등록, 학년·반 설정, 영상 할당, 퇴원·재원·리포트 관리를 할 수 있습니다. 배정된 영상의 진도·상세·우선 학습·스킵 방지는 배정 목록 탭에서 설정하세요.
+      </p>
 
       {/* 학생 등록 */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
