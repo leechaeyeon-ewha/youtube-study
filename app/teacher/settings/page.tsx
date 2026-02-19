@@ -57,9 +57,9 @@ export default function TeacherSettingsPage() {
         },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json().catch((): Record<string, unknown> => ({})) as { error?: string };
+      const resultData = await res.json().catch((): Record<string, unknown> => ({})) as { error?: string };
       if (!res.ok) {
-        setEmailMessage({ type: "error", text: data.error || "이메일 저장에 실패했습니다." });
+        setEmailMessage({ type: "error", text: resultData.error || "이메일 저장에 실패했습니다." });
         return;
       }
       setCurrentEmail(email);
