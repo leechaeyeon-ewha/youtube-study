@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import LoadingSpinner from "@/components/LoadingSpinner";
+
+type AuthSessionResponse = { data: { session: Session | null } };
 
 export default function TeacherSettingsPage() {
   const [mounted, setMounted] = useState(false);
@@ -25,10 +28,9 @@ export default function TeacherSettingsPage() {
       setLoading(false);
       return;
     }
-    supabase.auth.getSession().then((res) => {
-      const session = res.data?.session ?? null;
+    supabase.auth.getSession().then(({ data: { session } }: AuthSessionResponse) => {
       const email = session?.user?.email ?? null;
-      setCurrentEmail(email ?? null);
+      setCurrentEmail(email);
       setEmailInput(email ?? "");
       setLoading(false);
     });
@@ -45,7 +47,8 @@ export default function TeacherSettingsPage() {
     }
     setEmailSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data }: AuthSessionResponse = await supabase.auth.getSession() as AuthSessionResponse;
+      const session = data?.session ?? null;
       const res = await fetch("/api/teacher/email", {
         method: "PATCH",
         headers: {
@@ -54,9 +57,9 @@ export default function TeacherSettingsPage() {
         },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch((): Record<string, unknown> => ({})) as { error?: string };
       if (!res.ok) {
-        setEmailMessage({ type: "error", text: (data as { error?: string }).error || "이메일 저장에 실패했습니다." });
+        setEmailMessage({ type: "error", text: data.error || "이메일 저장에 실패했습니다." });
         return;
       }
       setCurrentEmail(email);
