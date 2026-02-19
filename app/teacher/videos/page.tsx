@@ -19,6 +19,12 @@ interface StudentRow {
   email: string | null;
 }
 
+interface CourseGroup {
+  courseId: string | null;
+  courseTitle: string;
+  videos: VideoRow[];
+}
+
 export default function TeacherVideosPage() {
   const [mounted, setMounted] = useState(false);
   const [videos, setVideos] = useState<VideoRow[]>([]);
@@ -28,11 +34,16 @@ export default function TeacherVideosPage() {
   const [titleInput, setTitleInput] = useState("");
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistCourseTitle, setPlaylistCourseTitle] = useState("");
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistMessage, setPlaylistMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [assignVideoId, setAssignVideoId] = useState<string | null>(null);
   const [assignStudentId, setAssignStudentId] = useState("");
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [searchTitle, setSearchTitle] = useState("");
+  const [activeTab, setActiveTab] = useState<"playlist" | "single">("playlist");
 
   async function load() {
     if (!supabase) {
@@ -56,6 +67,25 @@ export default function TeacherVideosPage() {
   useEffect(() => {
     load();
   }, []);
+
+  // 재생목록/개별 영상 그룹핑 (관리자 페이지와 동일한 구조를 간소화해서 사용)
+  const allVideos = videos;
+  const playlistGroups: CourseGroup[] = (() => {
+    const byCourse = new Map<string, VideoRow[]>();
+    for (const v of allVideos) {
+      const cid = v.course_id ?? "__none__";
+      if (!byCourse.has(cid)) byCourse.set(cid, []);
+      byCourse.get(cid)!.push(v);
+    }
+    const groups: CourseGroup[] = [];
+    byCourse.forEach((vs, courseId) => {
+      if (courseId === "__none__") return;
+      const title = vs[0]?.courses?.title ?? "기타 영상";
+      groups.push({ courseId, courseTitle: title, videos: vs });
+    });
+    return groups;
+  })();
+  const standaloneVideos = allVideos.filter((v) => !v.course_id);
 
   async function handleAddVideo(e: React.FormEvent) {
     e.preventDefault();
@@ -104,6 +134,45 @@ export default function TeacherVideosPage() {
     }
   }
 
+  async function handleImportPlaylist(e: React.FormEvent) {
+    e.preventDefault();
+    setPlaylistMessage(null);
+    if (!playlistUrl.trim()) {
+      setPlaylistMessage({ type: "error", text: "재생목록 URL을 입력해 주세요." });
+      return;
+    }
+    const { data: { session } } = await supabase!.auth.getSession();
+    if (!session?.access_token) return;
+    setPlaylistLoading(true);
+    try {
+      const res = await fetch("/api/teacher/import-playlist", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          playlist_url: playlistUrl.trim(),
+          course_title: playlistCourseTitle.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPlaylistMessage({ type: "error", text: data.error || "재생목록 등록에 실패했습니다." });
+        return;
+      }
+      setPlaylistMessage({
+        type: "success",
+        text: `${data.courseTitle ?? "재생목록"}이(가) 등록되었습니다. (새 영상 ${data.added}개, 기존 ${data.skipped}개)`,
+      });
+      setPlaylistUrl("");
+      setPlaylistCourseTitle("");
+      await load();
+    } finally {
+      setPlaylistLoading(false);
+    }
+  }
+
   async function handleAssign() {
     if (!assignVideoId || !assignStudentId) return;
     const { data: { session } } = await supabase!.auth.getSession();
@@ -142,9 +211,17 @@ export default function TeacherVideosPage() {
   }
 
   const searchLower = searchTitle.trim().toLowerCase();
-  const filteredVideos = searchLower
-    ? videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
-    : videos;
+  const filteredPlaylistGroups = playlistGroups
+    .map((g) => ({
+      ...g,
+      videos: searchLower
+        ? g.videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+        : g.videos,
+    }))
+    .filter((g) => g.videos.length > 0);
+  const filteredStandaloneVideos = searchLower
+    ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+    : standaloneVideos;
 
   return (
     <div className="space-y-8">
@@ -155,6 +232,46 @@ export default function TeacherVideosPage() {
         새 영상 등록과 담당 학생에게 배정만 가능합니다. 기존 영상 삭제는 할 수 없습니다.
       </p>
 
+      {/* 재생목록 등록 (관리자와 유사) */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">재생목록 등록</h2>
+        <form onSubmit={handleImportPlaylist} className="flex flex-wrap items-end gap-4">
+          <div className="min-w-[220px]">
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">YouTube 재생목록 URL</label>
+            <input
+              type="text"
+              value={playlistUrl}
+              onChange={(e) => setPlaylistUrl(e.target.value)}
+              placeholder="https://www.youtube.com/playlist?list=..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
+          <div className="min-w-[200px]">
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">반/재생목록 이름 (선택)</label>
+            <input
+              type="text"
+              value={playlistCourseTitle}
+              onChange={(e) => setPlaylistCourseTitle(e.target.value)}
+              placeholder="비우면 YouTube 제목 사용"
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={playlistLoading}
+            className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {playlistLoading ? "등록 중..." : "재생목록 등록"}
+          </button>
+          {playlistMessage && (
+            <span className={playlistMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}>
+              {playlistMessage.text}
+            </span>
+          )}
+        </form>
+      </section>
+
+      {/* 단일 영상 등록 */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">새 영상 등록</h2>
         <form onSubmit={handleAddVideo} className="flex flex-wrap items-end gap-4">
@@ -193,9 +310,34 @@ export default function TeacherVideosPage() {
         </form>
       </section>
 
+      {/* 재생목록 / 개별 영상 목록 (관리자 페이지 구조와 유사) */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 dark:border-zinc-700">
           <h2 className="text-lg font-semibold text-slate-800 dark:text-white">영상 목록 (배정만 가능, 삭제 불가)</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("playlist")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                activeTab === "playlist"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              재생목록
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("single")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                activeTab === "single"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              }`}
+            >
+              개별 영상
+            </button>
+          </div>
           <input
             type="text"
             value={searchTitle}
@@ -204,37 +346,68 @@ export default function TeacherVideosPage() {
             className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
           />
         </div>
-        <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-          {filteredVideos.length === 0 ? (
-            <li className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
-              {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 영상이 없습니다."}
-            </li>
-          ) : (
-            filteredVideos.map((v) => (
-              <li key={v.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-                <div>
-                  <span className="font-medium text-slate-900 dark:text-white">{v.title || v.video_id}</span>
-                  {v.courses && typeof v.courses === "object" && !Array.isArray(v.courses) && (
-                    <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
-                      {v.courses.title}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAssignVideoId(assignVideoId === v.id ? null : v.id);
-                    setAssignStudentId("");
-                    setAssignMessage(null);
-                  }}
-                  className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
-                >
-                  {assignVideoId === v.id ? "취소" : "배정"}
-                </button>
+        {activeTab === "playlist" ? (
+          <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+            {filteredPlaylistGroups.length === 0 ? (
+              <li className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
+                {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 재생목록이 없습니다."}
               </li>
-            ))
-          )}
-        </ul>
+            ) : (
+              filteredPlaylistGroups.map((g) => (
+                <li key={g.courseId!} className="px-6 py-4">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                    {g.courseTitle} <span className="text-xs text-slate-500 dark:text-slate-400">({g.videos.length}개 영상)</span>
+                  </h3>
+                  <ul className="space-y-1">
+                    {g.videos.map((v) => (
+                      <li key={v.id} className="flex flex-wrap items-center justify-between gap-3">
+                        <span className="text-sm text-slate-800 dark:text-slate-100">
+                          {v.title || v.video_id}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssignVideoId(assignVideoId === v.id ? null : v.id);
+                            setAssignStudentId("");
+                            setAssignMessage(null);
+                          }}
+                          className="rounded-lg bg-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                        >
+                          {assignVideoId === v.id ? "취소" : "배정"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))
+            )}
+          </ul>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+            {filteredStandaloneVideos.length === 0 ? (
+              <li className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
+                {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 개별 영상이 없습니다."}
+              </li>
+            ) : (
+              filteredStandaloneVideos.map((v) => (
+                <li key={v.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+                  <span className="font-medium text-slate-900 dark:text-white">{v.title || v.video_id}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignVideoId(assignVideoId === v.id ? null : v.id);
+                      setAssignStudentId("");
+                      setAssignMessage(null);
+                    }}
+                    className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                  >
+                    {assignVideoId === v.id ? "취소" : "배정"}
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
         {assignVideoId && (
           <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-zinc-700 dark:bg-zinc-800/50">
             <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">담당 학생에게 배정할 학생 선택</p>

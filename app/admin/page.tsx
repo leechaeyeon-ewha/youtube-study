@@ -106,6 +106,8 @@ export default function AdminDashboardPage() {
   const [assignTeacherId, setAssignTeacherId] = useState<string | null>(null);
   const [assignTeacherSelectedIds, setAssignTeacherSelectedIds] = useState<Set<string>>(new Set());
   const [assignTeacherSaving, setAssignTeacherSaving] = useState(false);
+  const [deleteTeacherId, setDeleteTeacherId] = useState<string | null>(null);
+  const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) {
@@ -241,6 +243,31 @@ export default function AdminDashboardPage() {
       });
     } finally {
       setAddTeacherLoading(false);
+    }
+  }
+
+  async function handleDeleteTeacher(teacherId: string, teacherName: string) {
+    if (!confirm(`"${teacherName}" 강사를 삭제하시겠습니까?\n계정이 삭제되며, 담당 학생의 강사 배정은 해제됩니다.`)) return;
+    if (!supabase) return;
+    setDeleteTeacherId(teacherId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/teachers", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({ teacher_id: teacherId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "강사 삭제 실패");
+      dashboardCache = null;
+      await load();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "강사 삭제에 실패했습니다.");
+    } finally {
+      setDeleteTeacherId(null);
     }
   }
 
@@ -737,7 +764,7 @@ export default function AdminDashboardPage() {
         학생 목록 · 영상 할당 · 모니터링
       </h1>
       <p className="text-slate-600 dark:text-slate-400">
-        학생 등록, 학년·반 설정, 영상 할당, 퇴원·재원·리포트 관리를 할 수 있습니다. 배정된 영상의 진도·상세·우선 학습·스킵 방지는 배정 목록 탭에서 설정하세요.
+        학생·강사 등록, 학년·반 설정, 영상 배정과 퇴원·재원·리포트 관리, 강사-학생 매칭을 할 수 있습니다.
       </p>
 
       {/* 학생 / 강사 목록 전환 */}
@@ -1334,23 +1361,66 @@ export default function AdminDashboardPage() {
               {teachers.length === 0 ? (
                 <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">등록된 강사가 없습니다.</div>
               ) : (
-                teachers.map((t) => (
-                  <div key={t.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-                    <span className="font-medium text-slate-900 dark:text-white">
-                      {t.full_name || t.email || t.id.slice(0, 8)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAssignTeacherId(t.id);
-                        setAssignTeacherSelectedIds(new Set(students.filter((s) => s.teacher_id === t.id).map((s) => s.id)));
-                      }}
-                      className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
-                    >
-                      학생 할당
-                    </button>
-                  </div>
-                ))
+                teachers.map((t) => {
+                  const assignedStudents = students.filter((s) => s.teacher_id === t.id);
+                  const isExpanded = expandedTeacherId === t.id;
+                  return (
+                    <div key={t.id} className="px-6 py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <span className="font-medium text-slate-900 dark:text-white">
+                          {t.full_name || t.email || t.id.slice(0, 8)}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedTeacherId(isExpanded ? null : t.id);
+                            }}
+                            className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+                          >
+                            {isExpanded ? "할당된 학생 접기" : `할당된 학생 (${assignedStudents.length}명)`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAssignTeacherId(t.id);
+                              setAssignTeacherSelectedIds(new Set(students.filter((s) => s.teacher_id === t.id).map((s) => s.id)));
+                            }}
+                            className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                          >
+                            학생 할당
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTeacher(t.id, t.full_name || t.email || "이 강사")}
+                            disabled={deleteTeacherId !== null}
+                            className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                          >
+                            {deleteTeacherId === t.id ? "삭제 중..." : "삭제"}
+                          </button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700 dark:bg-zinc-800 dark:text-slate-200">
+                          {assignedStudents.length === 0 ? (
+                            <p>현재 이 강사에게 할당된 학생이 없습니다.</p>
+                          ) : (
+                            <ul className="flex flex-wrap gap-2">
+                              {assignedStudents.map((s) => (
+                                <li
+                                  key={s.id}
+                                  className="rounded-lg bg-white px-3 py-1 shadow-sm dark:bg-zinc-900"
+                                >
+                                  {s.full_name || s.email || s.id.slice(0, 8)}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           </section>

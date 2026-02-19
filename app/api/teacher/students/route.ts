@@ -142,3 +142,111 @@ export async function PATCH(req: Request) {
   }
   return NextResponse.json({ success: true });
 }
+
+/** 강사 전용: 담당 학생 등록 (자동으로 teacher_id = 본인 설정). 퇴원/삭제는 관리자만. */
+export async function POST(req: Request) {
+  const teacher = await requireTeacher(req);
+  if (!teacher) {
+    return NextResponse.json({ error: "강사만 접근할 수 있습니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "서버 설정이 없습니다." },
+      { status: 500 }
+    );
+  }
+
+  let body: { full_name?: string; password?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "요청 본문을 읽을 수 없습니다." }, { status: 400 });
+  }
+  const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!fullName) {
+    return NextResponse.json({ error: "이름을 입력해 주세요." }, { status: 400 });
+  }
+  if (!password || password.length < 4) {
+    return NextResponse.json({ error: "비밀번호는 4자 이상 입력해 주세요." }, { status: 400 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const email = `student_${Date.now()}_${Math.random().toString(36).slice(2, 10)}@academy.local`;
+
+  const { data: userData, error: createError } = await supabase.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: fullName, role: "student" },
+  });
+
+  if (createError) {
+    return NextResponse.json(
+      { error: createError.message },
+      { status: 400 }
+    );
+  }
+
+  if (!userData.user) {
+    return NextResponse.json({ error: "사용자 생성에 실패했습니다." }, { status: 500 });
+  }
+
+  const profileRow = {
+    id: userData.user.id,
+    role: "student" as const,
+    full_name: fullName,
+    email,
+    teacher_id: teacher.id,
+  };
+
+  const { data: existing } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("id", userData.user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        role: "student",
+        full_name: fullName,
+        email,
+        teacher_id: teacher.id,
+      })
+      .eq("id", userData.user.id);
+    if (updateError) {
+      return NextResponse.json(
+        { error: `프로필 저장에 실패했습니다. ${updateError.message}`.trim() },
+        { status: 500 }
+      );
+    }
+  } else {
+    const { error: insertError } = await supabase.from("profiles").insert(profileRow);
+    if (insertError) {
+      const msg = insertError.message ?? "";
+      const hint = msg.includes("enrollment_status")
+        ? " Supabase에서 migration_enrollment_status.sql을 실행해 주세요."
+        : msg.includes("teacher_id")
+          ? " Supabase에서 migration_teacher_role.sql을 실행해 주세요."
+          : "";
+      return NextResponse.json(
+        { error: `프로필 저장에 실패했습니다.${hint}`.trim() },
+        { status: 500 }
+      );
+    }
+  }
+
+  await supabase
+    .from("profiles")
+    .update({ enrollment_status: "enrolled" })
+    .eq("id", userData.user.id);
+
+  return NextResponse.json({
+    id: userData.user.id,
+    full_name: fullName,
+    email,
+  });
+}

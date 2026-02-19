@@ -94,6 +94,7 @@ export default function TeacherLayout({
     { href: "/teacher/videos", label: "영상 관리" },
     { href: "/teacher/classes", label: "반 관리" },
     { href: "/teacher/assign", label: "배정 목록" },
+    { href: "/teacher/settings", label: "계정 설정" },
   ];
 
   return (

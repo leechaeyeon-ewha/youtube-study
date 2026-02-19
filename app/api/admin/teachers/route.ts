@@ -147,3 +147,63 @@ export async function POST(req: Request) {
     email,
   });
 }
+
+/** 관리자 전용: 강사 삭제 (계정 + 프로필 삭제, 담당 학생의 teacher_id는 DB에서 자동으로 null 처리) */
+export async function DELETE(req: Request) {
+  const admin = await requireAdmin(req);
+  if (!admin) {
+    return NextResponse.json({ error: "관리자만 접근할 수 있습니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "서버 설정이 없습니다. SUPABASE_SERVICE_ROLE_KEY를 설정해 주세요." },
+      { status: 500 }
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const teacherId = typeof body.teacher_id === "string" ? body.teacher_id.trim() : "";
+
+  if (!teacherId) {
+    return NextResponse.json({ error: "삭제할 강사를 지정해 주세요." }, { status: 400 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, role")
+    .eq("id", teacherId)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "해당 강사를 찾을 수 없습니다." }, { status: 404 });
+  }
+  if ((profile as { role?: string }).role !== "teacher") {
+    return NextResponse.json({ error: "강사만 삭제할 수 있습니다." }, { status: 400 });
+  }
+
+  // 프로필 삭제 (담당 학생의 teacher_id는 FK ON DELETE SET NULL로 자동 해제)
+  const { error: deleteProfileError } = await supabase
+    .from("profiles")
+    .delete()
+    .eq("id", teacherId);
+
+  if (deleteProfileError) {
+    return NextResponse.json(
+      { error: `프로필 삭제 실패: ${deleteProfileError.message}` },
+      { status: 500 }
+    );
+  }
+
+  const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(teacherId);
+
+  if (deleteAuthError) {
+    return NextResponse.json(
+      { error: `계정 삭제 중 오류: ${deleteAuthError.message}` },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ success: true });
+}
