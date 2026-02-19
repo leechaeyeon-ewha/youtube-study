@@ -25,7 +25,8 @@ export default function TeacherSettingsPage() {
       setLoading(false);
       return;
     }
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((res) => {
+      const session = res.data?.session ?? null;
       const email = session?.user?.email ?? null;
       setCurrentEmail(email ?? null);
       setEmailInput(email ?? "");
