@@ -5,8 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import KakaoBrowserBanner from "@/components/KakaoBrowserBanner";
 
-type Who = "admin" | "student" | null;
-type FormMode = "admin" | "student";
+type Who = "admin" | "teacher" | "student" | null;
+type FormMode = "admin" | "teacher" | "student";
 
 function LoginPageContent() {
   const router = useRouter();
@@ -14,6 +14,7 @@ function LoginPageContent() {
   const [mounted, setMounted] = useState(false);
   const [who, setWho] = useState<Who>(null);
   const [email, setEmail] = useState("");
+  const [teacherLoginId, setTeacherLoginId] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
@@ -37,6 +38,28 @@ function LoginPageContent() {
 
   if (!mounted) return null;
 
+  const redirectByRole = async () => {
+    const { data: { session } } = await supabase!.auth.getSession();
+    if (!session?.access_token) return;
+    const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
+    if (!res.ok) return;
+    const profile = (await res.json()) as { role?: string };
+    const role = profile?.role;
+    if (role === "admin") {
+      if (typeof window !== "undefined") window.location.href = "/admin";
+      return;
+    }
+    if (role === "teacher") {
+      if (typeof window !== "undefined") window.location.href = "/teacher";
+      return;
+    }
+    if (role === "student") {
+      if (typeof window !== "undefined") window.location.href = "/student";
+      return;
+    }
+    if (typeof window !== "undefined") window.location.href = "/admin";
+  };
+
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) {
@@ -48,12 +71,45 @@ function LoginPageContent() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      // 세션이 저장된 뒤 이동하도록 전체 페이지 이동 사용 (그렇지 않으면 /api/auth/me가 세션 못 읽음)
       if (data?.session) {
-        if (typeof window !== "undefined") window.location.href = "/admin";
+        await redirectByRole();
         return;
       }
       router.replace("/admin");
+      router.refresh();
+    } catch (err: unknown) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "로그인에 실패했습니다.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTeacherSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) {
+      setMessage({ type: "error", text: "Supabase 설정이 없습니다." });
+      return;
+    }
+    setMessage(null);
+    setLoading(true);
+    try {
+      const loginId = teacherLoginId.trim().toLowerCase();
+      if (!loginId) {
+        setMessage({ type: "error", text: "아이디를 입력해 주세요." });
+        setLoading(false);
+        return;
+      }
+      const teacherEmail = `${loginId}@academy.local`;
+      const { data, error } = await supabase.auth.signInWithPassword({ email: teacherEmail, password });
+      if (error) throw error;
+      if (data?.session) {
+        await redirectByRole();
+        return;
+      }
+      router.replace("/teacher");
       router.refresh();
     } catch (err: unknown) {
       setMessage({
@@ -88,6 +144,20 @@ function LoginPageContent() {
       });
       if (error) throw error;
       if (signInData?.session) {
+        const res = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${signInData.session.access_token}` },
+        });
+        if (res.ok) {
+          const profile = (await res.json()) as { role?: string };
+          if (profile?.role === "teacher") {
+            if (typeof window !== "undefined") window.location.href = "/teacher";
+            return;
+          }
+          if (profile?.role === "admin") {
+            if (typeof window !== "undefined") window.location.href = "/admin";
+            return;
+          }
+        }
         if (typeof window !== "undefined") window.location.href = "/student";
         return;
       }
@@ -151,6 +221,13 @@ function LoginPageContent() {
             </button>
             <button
               type="button"
+              onClick={() => setWho("teacher")}
+              className="rounded-xl border-2 border-slate-300 py-3.5 font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+            >
+              강사
+            </button>
+            <button
+              type="button"
               onClick={() => setWho("student")}
               className="rounded-xl border-2 border-slate-300 py-3.5 font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
             >
@@ -163,6 +240,7 @@ function LoginPageContent() {
   }
 
   const isAdmin = who === "admin";
+  const isTeacher = who === "teacher";
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
@@ -186,7 +264,7 @@ function LoginPageContent() {
           ← 뒤로
         </button>
         <h1 className="mb-6 text-center text-xl font-bold text-zinc-900 dark:text-white">
-          {isAdmin ? "관리자 로그인" : "학생 로그인"}
+          {isAdmin ? "관리자 로그인" : isTeacher ? "강사 로그인" : "학생 로그인"}
         </h1>
 
         {isAdmin ? (
@@ -238,7 +316,57 @@ function LoginPageContent() {
               {loading ? "로그인 중..." : "로그인"}
             </button>
           </form>
+        ) : isTeacher ? (
+          <form onSubmit={handleTeacherSubmit} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                아이디
+              </label>
+              <input
+                type="text"
+                value={teacherLoginId}
+                onChange={(e) => setTeacherLoginId(e.target.value)}
+                placeholder="강사 아이디"
+                required
+                autoComplete="username"
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                비밀번호
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                autoComplete="current-password"
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+            </div>
+            {message && (
+              <div
+                className={`rounded-lg px-4 py-3 text-sm ${
+                  message.type === "error"
+                    ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                    : "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                }`}
+              >
+                {message.text}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-lg bg-indigo-600 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {loading ? "로그인 중..." : "로그인"}
+            </button>
+          </form>
         ) : (
+          <>
           <form onSubmit={handleStudentSubmit} className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -295,6 +423,7 @@ function LoginPageContent() {
               </a>
             </p>
           </form>
+          </>
         )}
       </div>
     </div>
@@ -303,7 +432,7 @@ function LoginPageContent() {
 
 function LoginFallback() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
     </div>
   );

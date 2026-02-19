@@ -30,8 +30,8 @@ export async function GET(req: Request) {
   }
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  // grade 컬럼은 선택적이므로, 없을 때도 동작하도록 enrollment_status와 동일한 패턴 사용
-  const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
+  // grade, teacher_id 컬럼은 선택적이므로 없을 때도 동작하도록
+  const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
   let data: Record<string, unknown>[] | null = null;
 
   const { data: withStatus, error: errWith } = await supabase
@@ -42,9 +42,10 @@ export async function GET(req: Request) {
 
   if (errWith) {
     const msg = errWith.message ?? "";
+    const baseWithoutTeacher = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
     const { data: withoutStatus, error: errWithout } = await supabase
       .from("profiles")
-      .select(baseSelect)
+      .select(`${baseWithoutTeacher}, enrollment_status`)
       .eq("role", "student")
       .order("full_name");
 
@@ -65,16 +66,21 @@ export async function GET(req: Request) {
         class_id: null,
         grade: null,
         enrollment_status: "enrolled",
+        teacher_id: null,
       }));
     } else {
       data = (withoutStatus ?? []).map((row) => ({
         ...row,
         grade: (row as { grade?: string | null }).grade ?? null,
         enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
+        teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? null,
       }));
     }
   } else {
-    data = withStatus ?? [];
+    data = (withStatus ?? []).map((row) => ({
+      ...row,
+      teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? null,
+    }));
   }
 
   return NextResponse.json(data ?? []);

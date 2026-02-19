@@ -13,9 +13,17 @@ interface Profile {
   is_report_enabled: boolean;
   parent_phone: string | null;
   class_id: string | null;
-   /** 학년 (중1~고3). 없으면 null */
+  /** 학년 (중1~고3). 없으면 null */
   grade?: string | null;
   enrollment_status?: "enrolled" | "withdrawn";
+  /** 담당 강사 profile id */
+  teacher_id?: string | null;
+}
+
+interface TeacherRow {
+  id: string;
+  full_name: string | null;
+  email: string | null;
 }
 
 interface ClassRow {
@@ -48,6 +56,7 @@ alter table public.profiles
 comment on column public.profiles.enrollment_status is 'enrolled: 재원생, withdrawn: 퇴원생';`;
 let dashboardCache: {
   students: Profile[];
+  teachers: TeacherRow[];
   classes: ClassRow[];
   at: number;
 } | null = null;
@@ -87,6 +96,17 @@ export default function AdminDashboardPage() {
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
   /** 학생 이름 검색어 */
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  /** 목록 탭: 학생 | 강사 */
+  const [listTab, setListTab] = useState<"students" | "teachers">("students");
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [addTeacherLoginId, setAddTeacherLoginId] = useState("");
+  const [addTeacherPassword, setAddTeacherPassword] = useState("");
+  const [addTeacherName, setAddTeacherName] = useState("");
+  const [addTeacherLoading, setAddTeacherLoading] = useState(false);
+  const [addTeacherMessage, setAddTeacherMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [assignTeacherId, setAssignTeacherId] = useState<string | null>(null);
+  const [assignTeacherSelectedIds, setAssignTeacherSelectedIds] = useState<Set<string>>(new Set());
+  const [assignTeacherSaving, setAssignTeacherSaving] = useState(false);
 
   async function load() {
     if (!supabase) {
@@ -98,6 +118,7 @@ export default function AdminDashboardPage() {
     const useCache = dashboardCache && now - dashboardCache.at < DASHBOARD_CACHE_TTL_MS;
     if (useCache && dashboardCache) {
       setStudents(dashboardCache.students);
+      setTeachers(dashboardCache.teachers);
       setClasses(dashboardCache.classes);
       setLoading(false);
     }
@@ -106,20 +127,24 @@ export default function AdminDashboardPage() {
     const authHeaders: Record<string, string> = session?.access_token
       ? { Authorization: `Bearer ${session.access_token}` }
       : {};
-    const [studentsRes, classesRes] = await Promise.all([
+    const [studentsRes, teachersRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/teachers", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase.from("classes").select("id, title").order("title"),
     ]);
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
+    const nextTeachers = Array.isArray(teachersRes) ? (teachersRes as TeacherRow[]) : [];
     const nextClasses = (classesRes.error ? [] : (classesRes.data as ClassRow[]) ?? []);
 
     setStudents(nextStudents);
+    setTeachers(nextTeachers);
     setClasses(nextClasses);
     setLoading(false);
 
     dashboardCache = {
       students: nextStudents,
+      teachers: nextTeachers,
       classes: nextClasses,
       at: Date.now(),
     };
@@ -175,6 +200,84 @@ export default function AdminDashboardPage() {
       });
     } finally {
       setAddLoading(false);
+    }
+  }
+
+  async function handleAddTeacher(e: React.FormEvent) {
+    e.preventDefault();
+    setAddTeacherMessage(null);
+    const loginId = addTeacherLoginId.trim().toLowerCase();
+    if (!loginId) {
+      setAddTeacherMessage({ type: "error", text: "아이디를 입력해 주세요." });
+      return;
+    }
+    if (!addTeacherPassword || addTeacherPassword.length < 4) {
+      setAddTeacherMessage({ type: "error", text: "비밀번호는 4자 이상 입력해 주세요." });
+      return;
+    }
+    if (!addTeacherName.trim()) {
+      setAddTeacherMessage({ type: "error", text: "강사 이름을 입력해 주세요." });
+      return;
+    }
+    setAddTeacherLoading(true);
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const res = await fetch("/api/admin/teachers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({
+          login_id: loginId,
+          password: addTeacherPassword,
+          full_name: addTeacherName.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "강사 등록 실패");
+      setAddTeacherMessage({ type: "success", text: `${addTeacherName.trim()} 강사가 등록되었습니다.` });
+      setAddTeacherLoginId("");
+      setAddTeacherPassword("");
+      setAddTeacherName("");
+      dashboardCache = null;
+      await load();
+    } catch (err: unknown) {
+      setAddTeacherMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "강사 등록에 실패했습니다.",
+      });
+    } finally {
+      setAddTeacherLoading(false);
+    }
+  }
+
+  async function handleSaveAssignTeacher() {
+    if (!assignTeacherId || !supabase) return;
+    setAssignTeacherSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/students/assign-teacher", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+        },
+        body: JSON.stringify({
+          teacherId: assignTeacherId,
+          studentIds: Array.from(assignTeacherSelectedIds),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "저장 실패");
+      setAssignTeacherId(null);
+      setAssignTeacherSelectedIds(new Set());
+      dashboardCache = null;
+      await load();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "저장에 실패했습니다.");
+    } finally {
+      setAssignTeacherSaving(false);
     }
   }
 
@@ -631,6 +734,11 @@ export default function AdminDashboardPage() {
     );
   }
 
+  const getTeacherName = (teacherId: string | null | undefined) => {
+    if (!teacherId) return null;
+    return teachers.find((t) => t.id === teacherId)?.full_name ?? null;
+  };
+
   return (
     <div className="space-y-10">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
@@ -640,6 +748,37 @@ export default function AdminDashboardPage() {
         학생 등록, 학년·반 설정, 영상 할당, 퇴원·재원·리포트 관리를 할 수 있습니다. 배정된 영상의 진도·상세·우선 학습·스킵 방지는 배정 목록 탭에서 설정하세요.
       </p>
 
+      {/* 학생 / 강사 목록 전환 */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-slate-600 dark:text-slate-400">목록:</span>
+          <button
+            type="button"
+            onClick={() => setListTab("students")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${
+              listTab === "students"
+                ? "bg-indigo-600 text-white"
+                : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+            }`}
+          >
+            학생 목록
+          </button>
+          <button
+            type="button"
+            onClick={() => setListTab("teachers")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${
+              listTab === "teachers"
+                ? "bg-indigo-600 text-white"
+                : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+            }`}
+          >
+            강사 목록
+          </button>
+        </div>
+      </section>
+
+      {listTab === "students" && (
+      <>
       {/* 학생 등록 */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">
@@ -860,6 +999,11 @@ export default function AdminDashboardPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-900 dark:text-white">
                       {s.full_name || s.email || s.id.slice(0, 8)}
+                      {getTeacherName(s.teacher_id) && (
+                        <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
+                          강사: {getTeacherName(s.teacher_id)}
+                        </span>
+                      )}
                     </span>
                     <select
                       value={s.grade ?? ""}
@@ -1149,6 +1293,142 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </section>
+      </>
+      )}
+
+      {listTab === "teachers" && (
+        <>
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">강사 등록</h2>
+            <form onSubmit={handleAddTeacher} className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[120px]">
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">아이디</label>
+                <input
+                  type="text"
+                  value={addTeacherLoginId}
+                  onChange={(e) => setAddTeacherLoginId(e.target.value)}
+                  placeholder="영문 소문자, 숫자"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                />
+              </div>
+              <div className="min-w-[160px]">
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">초기 비밀번호</label>
+                <input
+                  type="password"
+                  value={addTeacherPassword}
+                  onChange={(e) => setAddTeacherPassword(e.target.value)}
+                  placeholder="4자 이상"
+                  minLength={4}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                />
+              </div>
+              <div className="min-w-[160px]">
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">강사 이름</label>
+                <input
+                  type="text"
+                  value={addTeacherName}
+                  onChange={(e) => setAddTeacherName(e.target.value)}
+                  placeholder="홍길동"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={addTeacherLoading}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {addTeacherLoading ? "등록 중..." : "강사 등록"}
+              </button>
+              {addTeacherMessage && (
+                <span className={addTeacherMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}>
+                  {addTeacherMessage.text}
+                </span>
+              )}
+            </form>
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 className="border-b border-slate-200 px-6 py-4 text-lg font-semibold text-slate-800 dark:border-zinc-700 dark:text-white">강사 목록</h2>
+            <div className="divide-y divide-slate-100 dark:divide-zinc-700">
+              {teachers.length === 0 ? (
+                <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">등록된 강사가 없습니다.</div>
+              ) : (
+                teachers.map((t) => (
+                  <div key={t.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+                    <span className="font-medium text-slate-900 dark:text-white">
+                      {t.full_name || t.email || t.id.slice(0, 8)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssignTeacherId(t.id);
+                        setAssignTeacherSelectedIds(new Set(students.filter((s) => s.teacher_id === t.id).map((s) => s.id)));
+                      }}
+                      className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                    >
+                      학생 할당
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* 강사별 학생 할당 모달 */}
+      {assignTeacherId != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">학생 할당</h3>
+            <p className="mb-3 text-sm text-slate-600 dark:text-slate-400">
+              담당할 학생을 선택하세요. (재원생만 표시)
+            </p>
+            <ul className="max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
+              {students
+                .filter((s) => (s.enrollment_status ?? "enrolled") === "enrolled")
+                .map((s) => (
+                  <li key={s.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id={`assign-${s.id}`}
+                      checked={assignTeacherSelectedIds.has(s.id)}
+                      onChange={(e) => {
+                        setAssignTeacherSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(s.id);
+                          else next.delete(s.id);
+                          return next;
+                        });
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <label htmlFor={`assign-${s.id}`} className="cursor-pointer text-sm text-slate-800 dark:text-slate-200">
+                      {s.full_name || s.email || s.id.slice(0, 8)}
+                    </label>
+                  </li>
+                ))}
+            </ul>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setAssignTeacherId(null); setAssignTeacherSelectedIds(new Set()); }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 dark:border-zinc-600 dark:text-slate-200"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={assignTeacherSaving}
+                onClick={handleSaveAssignTeacher}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {assignTeacherSaving ? "저장 중..." : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

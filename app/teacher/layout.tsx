@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
-export default function AdminLayout({
+export default function TeacherLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -55,9 +55,9 @@ export default function AdminLayout({
       }
       const profileData = (await res.json()) as { role?: string } | null;
       if (cancelled) return;
-      if (profileData?.role !== "admin") {
+      if (profileData?.role !== "teacher") {
         setLoading(false);
-        if (profileData?.role === "teacher") router.replace("/teacher");
+        if (profileData?.role === "admin") router.replace("/admin");
         else if (profileData?.role === "student") router.replace("/student");
         else router.replace("/");
         return;
@@ -67,7 +67,6 @@ export default function AdminLayout({
     }
     check();
     return () => { cancelled = true; };
-    // 마운트 시 한 번만 실행. 의존성에 router 넣으면 재실행으로 루프 가능성 있음.
   }, []);
 
   useEffect(() => {
@@ -91,20 +90,19 @@ export default function AdminLayout({
   );
 
   const nav = [
-    { href: "/admin", label: "대시보드" },
-    { href: "/admin/videos", label: "영상 관리" },
-    { href: "/admin/classes", label: "반 관리" },
-    { href: "/admin/assign", label: "배정 목록" },
+    { href: "/teacher", label: "대시보드" },
+    { href: "/teacher/videos", label: "영상 관리" },
+    { href: "/teacher/classes", label: "반 관리" },
+    { href: "/teacher/assign", label: "배정 목록" },
   ];
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
-        {/* 모바일: 한 줄 로고 + 햄버거 */}
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 md:px-4 md:py-4">
           <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-6">
             <Link
-              href="/admin"
+              href="/teacher"
               className="truncate text-base font-bold text-slate-800 dark:text-white hover:underline md:text-lg"
               title="영어는 김현정 영어전문학원"
             >
@@ -113,7 +111,7 @@ export default function AdminLayout({
             </Link>
             <span className="hidden flex-shrink-0 text-slate-400 dark:text-zinc-500 md:inline">|</span>
             <span className="hidden flex-shrink-0 text-sm font-medium text-slate-600 dark:text-slate-400 md:inline">
-              관리자
+              강사
             </span>
             <nav className="hidden gap-1 md:flex">
               {nav.map(({ href, label }) => (
@@ -133,7 +131,7 @@ export default function AdminLayout({
           </div>
           <div className="hidden flex-shrink-0 items-center gap-4 md:flex">
             <span className="text-sm text-slate-500 dark:text-slate-400">
-              {profile.full_name ?? profile.email ?? "Admin"}
+              {profile.full_name ?? profile.email ?? "강사"}
             </span>
             <Link
               href="/"
@@ -173,7 +171,6 @@ export default function AdminLayout({
           </button>
         </div>
 
-        {/* 모바일 전용: 펼침 메뉴 */}
         {mobileMenuOpen && (
           <div className="border-t border-slate-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 md:hidden">
             <nav className="flex flex-col gap-0.5">
@@ -193,7 +190,7 @@ export default function AdminLayout({
             </nav>
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-zinc-700">
               <span className="w-full truncate text-xs text-slate-500 dark:text-slate-400">
-                {profile.full_name ?? profile.email ?? "Admin"}
+                {profile.full_name ?? profile.email ?? "강사"}
               </span>
               <Link
                 href="/"

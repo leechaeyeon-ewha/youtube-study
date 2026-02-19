@@ -1,4 +1,4 @@
-export type ProfileRole = "admin" | "student";
+export type ProfileRole = "admin" | "student" | "teacher";
 
 export interface Profile {
   id: string;
@@ -12,6 +12,8 @@ export interface Profile {
   class_id?: string | null;
   /** 학년 (중1~고3). 없으면 null/undefined */
   grade?: string | null;
+  /** 담당 강사(teacher)의 profile id. 학생만 사용 */
+  teacher_id?: string | null;
 }
 
 export interface Course {

@@ -42,6 +42,13 @@ interface StudentSummary {
   grade?: string | null;
   class_id?: string | null;
   enrollment_status?: "enrolled" | "withdrawn";
+  teacher_id?: string | null;
+}
+
+interface TeacherRow {
+  id: string;
+  full_name: string | null;
+  email: string | null;
 }
 
 interface ClassRow {
@@ -68,6 +75,7 @@ export default function AdminAssignPage() {
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
   /** 학생 요약 정보 (이름/이메일) — /api/admin/students 기반 */
   const [students, setStudents] = useState<StudentSummary[]>([]);
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   /** 반 목록 (id -> title 매핑용) */
   const [classes, setClasses] = useState<ClassRow[]>([]);
   /** 학생별 다중 선택된 배정 ID 목록 */
@@ -220,8 +228,9 @@ export default function AdminAssignPage() {
       ? { Authorization: `Bearer ${session.access_token}` }
       : {};
 
-    const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
+    const [studentsRes, teachersRes, assignmentsRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/teachers", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       supabase
         .from("assignments")
         .select(ADMIN_ASSIGNMENTS_SELECT)
@@ -230,10 +239,12 @@ export default function AdminAssignPage() {
     ]);
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as StudentSummary[]) : [];
+    const nextTeachers = Array.isArray(teachersRes) ? (teachersRes as TeacherRow[]) : [];
     const nextAssignments = assignmentsRes.error ? [] : (((assignmentsRes.data ?? []) as unknown) as AssignmentRow[]);
     const nextClasses = classesRes.error ? [] : ((classesRes.data as ClassRow[]) ?? []);
 
     setStudents(nextStudents);
+    setTeachers(nextTeachers);
     setAssignments(nextAssignments);
     setClasses(nextClasses);
     setLoading(false);
@@ -432,6 +443,7 @@ export default function AdminAssignPage() {
                 return entriesToShow.map(([userId, list]) => {
                   const student = students.find((s) => s.id === userId);
                   const studentName = student?.full_name || student?.email || userId.slice(0, 8);
+                  const teacherName = student?.teacher_id ? teachers.find((t) => t.id === student.teacher_id)?.full_name : null;
                   const gradeLabel = student?.grade ?? null;
                   const classTitle =
                     student?.class_id != null
@@ -443,6 +455,11 @@ export default function AdminAssignPage() {
                       <div className="flex items-center justify-between gap-4 px-4 py-3">
                         <span className="font-medium text-slate-900 dark:text-white">
                           {studentName}
+                          {teacherName && (
+                            <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
+                              강사: {teacherName}
+                            </span>
+                          )}
                         </span>
                         {(gradeLabel || classTitle) && (
                           <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
