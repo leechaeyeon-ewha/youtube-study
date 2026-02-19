@@ -47,8 +47,8 @@ export default function TeacherSettingsPage() {
     }
     setEmailSaving(true);
     try {
-      const { data }: AuthSessionResponse = await supabase.auth.getSession() as AuthSessionResponse;
-      const session = data?.session ?? null;
+      const { data: sessionData }: AuthSessionResponse = await supabase.auth.getSession() as AuthSessionResponse;
+      const session = sessionData.session;
       const res = await fetch("/api/teacher/email", {
         method: "PATCH",
         headers: {
