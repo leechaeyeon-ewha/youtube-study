@@ -224,6 +224,7 @@ export default function StudentPage() {
       setProfileEmail(email);
       setEmailInput(email && !email.endsWith("@academy.local") ? email : "");
 
+      // assignments 테이블 실시간 반영 (캐시 없이 매 요청마다 DB 조회)
       const { data, error: fetchError } = await supabase
         .from("assignments")
         .select(ASSIGNMENT_SELECT_STUDENT_LIST)
@@ -242,6 +243,7 @@ export default function StudentPage() {
       }
 
       const list = (data ?? []) as AssignmentRow[];
+      // 관리자 삭제/숨김(is_visible=false) 처리한 영상은 즉시 제외
       const visible = list.filter((a) => a.is_visible !== false);
       setAssignments(visible);
       setLoading(false);

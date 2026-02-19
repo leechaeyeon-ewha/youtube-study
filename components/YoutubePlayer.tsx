@@ -133,20 +133,24 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       if (!Number.isFinite(lastPosition) || lastPosition < 0) return;
 
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-        await supabase
-          .from("assignments")
-          .update({
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        await fetch("/api/progress", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            assignmentId: assignmentId as string,
             progress_percent: progressPercent,
             is_completed: completed,
             last_position: lastPosition,
             last_watched_at: now,
-          })
-          .eq("id", assignmentId)
-          .eq("user_id", user.id);
+          }),
+        });
       } catch (_: unknown) {
-        // ignore (updated_at 컬럼 없을 수 있음)
+        // ignore
       }
     },
     [assignmentId]

@@ -322,22 +322,46 @@ export default function AdminVideosPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!supabase || !confirm("이 영상을 삭제할까요? 배정된 학습도 함께 영향을 받을 수 있습니다.")) return;
+    if (!supabase || !confirm("이 영상을 삭제할까요? 해당 영상에 대한 학생 배정이 자동으로 해제됩니다.")) return;
+    const { data: affected } = await supabase.from("assignments").select("id").eq("video_id", id);
+    const assignmentIds = (affected ?? []).map((r) => r.id);
+    await supabase.from("assignments").delete().eq("video_id", id);
     await supabase.from("videos").delete().eq("id", id);
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token && assignmentIds.length > 0) {
+      fetch("/api/revalidate-student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ assignmentIds }),
+        cache: "no-store",
+      }).catch(() => {});
+    }
     loadVideos();
   }
 
   async function handleBulkDelete() {
     if (!supabase || selectedVideoIds.length === 0) return;
-    if (!confirm(`선택한 ${selectedVideoIds.length}개 영상을 삭제할까요?\n배정된 학습 기록도 함께 삭제되며, 복구할 수 없습니다.`)) return;
+    if (!confirm(`선택한 ${selectedVideoIds.length}개 영상을 삭제할까요?\n해당 영상에 대한 학생 배정이 자동으로 해제되며, 복구할 수 없습니다.`)) return;
     setDeleteLoading(true);
     setBulkMessage(null);
     try {
+      const { data: affected } = await supabase.from("assignments").select("id").in("video_id", selectedVideoIds);
+      const assignmentIds = (affected ?? []).map((r) => r.id);
+      await supabase.from("assignments").delete().in("video_id", selectedVideoIds);
       const { error } = await supabase.from("videos").delete().in("id", selectedVideoIds);
       if (error) throw error;
-      setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다.` });
+      setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다. (배정 자동 해제)` });
       setSelectedVideoIds([]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && assignmentIds.length > 0) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       loadVideos();
     } catch (err: unknown) {
       setBulkMessage({ type: "error", text: err instanceof Error ? err.message : "삭제에 실패했습니다." });
@@ -545,24 +569,41 @@ export default function AdminVideosPage() {
     setAssignMessage(null);
     try {
       let added = 0;
+      const newIds: string[] = [];
       for (const videoId of selectedVideoIds) {
         for (const userId of userIds) {
-          const { error } = await supabase.from("assignments").insert({
-            user_id: userId,
-            video_id: videoId,
-            is_completed: false,
-            progress_percent: 0,
-            last_position: 0,
-            is_visible: true,
-            is_weekly_assignment: false,
-            is_priority: assignPriority,
-          });
-          if (!error) added += 1;
+          const { data: row, error } = await supabase
+            .from("assignments")
+            .insert({
+              user_id: userId,
+              video_id: videoId,
+              is_completed: false,
+              progress_percent: 0,
+              last_position: 0,
+              is_visible: true,
+              is_weekly_assignment: false,
+              is_priority: assignPriority,
+            })
+            .select("id")
+            .single();
+          if (!error) {
+            added += 1;
+            if (row?.id) newIds.push(row.id);
+          }
         }
       }
       setAssignMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상을 ${userIds.length}명에게 할당했습니다. (중복 제외 ${added}건 추가)` });
       setSelectedVideoIds([]);
       setAssignModalOpen(false);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && newIds.length > 0) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds: newIds }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       setAssignClassId("");
       setAssignStudentIds([]);
       setAssignPriority(false);

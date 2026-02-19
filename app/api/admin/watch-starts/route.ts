@@ -36,7 +36,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabase
     .from("watch_starts")
     .select("id, started_at")
-    .eq("assignment_id", assignmentId)
+    .eq("assignment_id", assignmentId as string)
     .order("started_at", { ascending: false });
 
   if (error) {

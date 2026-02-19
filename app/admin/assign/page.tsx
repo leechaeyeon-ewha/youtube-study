@@ -41,6 +41,7 @@ interface StudentSummary {
   email: string | null;
   grade?: string | null;
   class_id?: string | null;
+  enrollment_status?: "enrolled" | "withdrawn";
 }
 
 interface ClassRow {
@@ -119,7 +120,7 @@ export default function AdminAssignPage() {
       const { data: { session } } = await supabase.auth.getSession();
       const headers: Record<string, string> = {};
       if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/admin/watch-starts?assignmentId=${assignmentId}`, { headers, cache: "no-store" });
+      const res = await fetch(`/api/admin/watch-starts?assignmentId=${encodeURIComponent(assignmentId as string)}`, { headers, cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as { error?: string } | { id: string; started_at: string }[];
       if (!res.ok) {
         const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
@@ -140,15 +141,19 @@ export default function AdminAssignPage() {
     }
   }
 
-  /** 관리자가 배정을 수정한 뒤 학생 페이지 캐시 무효화 (즉시 갱신용) */
-  async function revalidateStudentPaths() {
+  /** 관리자가 배정을 수정한 뒤 학생/관리자/시청 페이지 캐시 무효화 (즉시 갱신용) */
+  async function revalidateStudentPaths(assignmentIds?: string[]) {
     if (!supabase) return;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
     try {
       await fetch("/api/revalidate-student", {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ assignmentIds: assignmentIds ?? [] }),
         cache: "no-store",
       });
     } catch {
@@ -169,7 +174,7 @@ export default function AdminAssignPage() {
         return;
       }
       assignPageCache = null;
-      revalidateStudentPaths();
+      revalidateStudentPaths([assignmentId]);
       await load();
     } finally {
       setSkipToggleAssignmentId(null);
@@ -189,7 +194,7 @@ export default function AdminAssignPage() {
         return;
       }
       assignPageCache = null;
-      revalidateStudentPaths();
+      revalidateStudentPaths([assignmentId]);
       await load();
     } finally {
       setPriorityToggleAssignmentId(null);
@@ -252,7 +257,7 @@ export default function AdminAssignPage() {
     await supabase.from("assignments").delete().in("id", ids);
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     assignPageCache = null;
-    revalidateStudentPaths();
+    revalidateStudentPaths(ids);
     await load();
   }
 
@@ -290,7 +295,7 @@ export default function AdminAssignPage() {
     if (!confirm("이 배정을 해제할까요?")) return;
     await supabase.from("assignments").delete().eq("id", id);
     assignPageCache = null;
-    revalidateStudentPaths();
+    revalidateStudentPaths([id]);
     await load();
   }
 
@@ -368,6 +373,14 @@ export default function AdminAssignPage() {
                   list.push(a);
                   byStudent.set(a.user_id, list);
                 }
+                // 대시보드와 동일하게 재원생만 표시 (배정 유무와 관계없이 전체 학생 수 일치)
+                const enrolledStudents = students.filter(
+                  (s) => (s.enrollment_status ?? "enrolled") === "enrolled"
+                );
+                const entries: [string, AssignmentRow[]][] = enrolledStudents.map((s) => [
+                  s.id,
+                  byStudent.get(s.id) ?? [],
+                ]);
                 const gradeOrder = ["중1", "중2", "중3", "고1", "고2", "고3"] as const;
                 const gradeRank: Record<string, number> = gradeOrder.reduce(
                   (acc, g, idx) => ({ ...acc, [g]: idx }),
@@ -377,7 +390,6 @@ export default function AdminAssignPage() {
                   if (!classId) return "";
                   return classes.find((c) => c.id === classId)?.title ?? "";
                 };
-                const entries = Array.from(byStudent.entries());
                 const sortedEntries =
                   studentSort === "none"
                     ? entries
@@ -635,7 +647,10 @@ export default function AdminAssignPage() {
                                           <td className="px-4 py-2.5">
                                             <button
                                               type="button"
-                                              onClick={() => setDetailModalAssignment(a)}
+                                              onClick={() => {
+                                                setDetailModalAssignment(a);
+                                                handleToggleWatchStarts(a.id);
+                                              }}
                                               className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
                                             >
                                               상세
@@ -756,7 +771,14 @@ export default function AdminAssignPage() {
                   </div>
                   <div>
                     <dt className="text-slate-500 dark:text-slate-400">최초 시청 시작 시간</dt>
-                    <dd className="text-slate-800 dark:text-slate-200">{formatStartedAt(a.started_at)}</dd>
+                    <dd className="text-slate-800 dark:text-slate-200">
+                      {formatStartedAt(
+                        a.started_at ??
+                          (isCurrentAssignment && watchStarts.length > 0
+                            ? watchStarts[watchStarts.length - 1].started_at
+                            : null)
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt className="flex items-center justify-between text-slate-500 dark:text-slate-400">

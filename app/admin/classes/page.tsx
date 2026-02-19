@@ -270,23 +270,40 @@ export default function AdminClassesPage() {
         return;
       }
       let inserted = 0;
+      const newIds: string[] = [];
       for (const videoId of bulkAssignVideoIds) {
         for (const userId of studentIds) {
-          const { error } = await supabase.from("assignments").insert({
-            user_id: userId,
-            video_id: videoId,
-            is_completed: false,
-            progress_percent: 0,
-            last_position: 0,
-            is_visible: true,
-            is_weekly_assignment: false,
-          });
-          if (!error) inserted += 1;
+          const { data: row, error } = await supabase
+            .from("assignments")
+            .insert({
+              user_id: userId,
+              video_id: videoId,
+              is_completed: false,
+              progress_percent: 0,
+              last_position: 0,
+              is_visible: true,
+              is_weekly_assignment: false,
+            })
+            .select("id")
+            .single();
+          if (!error) {
+            inserted += 1;
+            if (row?.id) newIds.push(row.id);
+          }
         }
       }
       const className = classes.find((c) => c.id === bulkAssignClassId)?.title ?? "반";
       setBulkAssignMessage({ type: "success", text: `${className}에 ${inserted}건 배정되었습니다. (이미 있던 건 제외)` });
       setBulkAssignVideoIds([]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && newIds.length > 0) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds: newIds }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       load();
     } catch (err: unknown) {
       setBulkAssignMessage({ type: "error", text: err instanceof Error ? err.message : "배정 실패" });

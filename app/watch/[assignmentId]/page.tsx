@@ -89,7 +89,7 @@ export default function WatchPage() {
           "Content-Type": "application/json",
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({ assignmentId: id }),
+        body: JSON.stringify({ assignmentId: id as string }),
       });
 
       const data = await res.json().catch(() => ({})) as { error?: string; ok?: boolean; alreadyRecorded?: boolean };
@@ -161,6 +161,19 @@ export default function WatchPage() {
 
       setAssignment(data as AssignmentRow);
       setLoading(false);
+
+      // 데이터 정합성: 해당 assignment의 진도/위치 필드가 null이면 즉시 기본값으로 정규화
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        fetch("/api/watch-ensure-progress", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ assignmentId: id as string }),
+        }).catch(() => {});
+      }
     }
 
     load();

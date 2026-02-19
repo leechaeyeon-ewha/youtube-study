@@ -218,15 +218,19 @@ export default function AdminDashboardPage() {
         if (insertErr || !inserted?.id) throw new Error(insertErr?.message ?? "영상 등록 실패");
         videoDbId = inserted.id;
       }
-      const { error } = await supabase.from("assignments").insert({
-        user_id: assignUserId,
-        video_id: videoDbId,
-        is_completed: false,
-        progress_percent: 0,
-        last_position: 0,
-        is_visible: true,
-        is_weekly_assignment: false,
-      });
+      const { data: inserted, error } = await supabase
+        .from("assignments")
+        .insert({
+          user_id: assignUserId,
+          video_id: videoDbId,
+          is_completed: false,
+          progress_percent: 0,
+          last_position: 0,
+          is_visible: true,
+          is_weekly_assignment: false,
+        })
+        .select("id")
+        .single();
       if (error) {
         if (error.code === "23505") throw new Error("이미 해당 학생에게 배정된 영상입니다.");
         throw new Error(error.message);
@@ -234,6 +238,15 @@ export default function AdminDashboardPage() {
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
       setAssignUrl("");
       setAssignUserId(null);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && inserted?.id) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds: [inserted.id] }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       load();
     } catch (err: unknown) {
       setAssignMessage({
@@ -326,21 +339,34 @@ export default function AdminDashboardPage() {
     setAssignFromLibraryVideoId(videoDbId);
     setAssignMessage(null);
     try {
-      const { error } = await supabase.from("assignments").insert({
-        user_id: assignUserId,
-        video_id: videoDbId,
-        is_completed: false,
-        progress_percent: 0,
-        last_position: 0,
-        is_visible: true,
-        is_weekly_assignment: false,
-      });
+      const { data: inserted, error } = await supabase
+        .from("assignments")
+        .insert({
+          user_id: assignUserId,
+          video_id: videoDbId,
+          is_completed: false,
+          progress_percent: 0,
+          last_position: 0,
+          is_visible: true,
+          is_weekly_assignment: false,
+        })
+        .select("id")
+        .single();
       if (error) {
         if (error.code === "23505") throw new Error("이미 해당 학생에게 배정된 영상입니다.");
         throw new Error(error.message);
       }
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
       dashboardCache = null;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && inserted?.id) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds: [inserted.id] }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       await load();
     } catch (err: unknown) {
       setAssignMessage({
@@ -360,27 +386,42 @@ export default function AdminDashboardPage() {
     try {
       let inserted = 0;
       let skipped = 0;
+      const newIds: string[] = [];
       for (const videoId of videoIds) {
-        const { error } = await supabase.from("assignments").insert({
-          user_id: assignUserId,
-          video_id: videoId,
-          is_completed: false,
-          progress_percent: 0,
-          last_position: 0,
-          is_visible: true,
-          is_weekly_assignment: false,
-        });
+        const { data: row, error } = await supabase
+          .from("assignments")
+          .insert({
+            user_id: assignUserId,
+            video_id: videoId,
+            is_completed: false,
+            progress_percent: 0,
+            last_position: 0,
+            is_visible: true,
+            is_weekly_assignment: false,
+          })
+          .select("id")
+          .single();
         if (error) {
           if (error.code === "23505") skipped += 1;
           else throw new Error(error.message);
         } else {
           inserted += 1;
+          if (row?.id) newIds.push(row.id);
         }
       }
       setAssignMessage({
         type: "success",
         text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
       });
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && newIds.length > 0) {
+        fetch("/api/revalidate-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ assignmentIds: newIds }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
       dashboardCache = null;
       await load();
     } catch (err: unknown) {

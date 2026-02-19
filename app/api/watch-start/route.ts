@@ -53,7 +53,7 @@ export async function POST(req: Request) {
   const { data: assignment, error: fetchErr } = await supabase
     .from("assignments")
     .select("id, user_id, started_at")
-    .eq("id", assignmentId)
+    .eq("id", assignmentId as string)
     .eq("user_id", user.id)
     .single();
 
@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
     const { error: insertErr } = await serviceSupabase
       .from("watch_starts")
-      .insert({ assignment_id: assignmentId, started_at: now });
+      .insert({ assignment_id: assignmentId as string, started_at: now });
     if (insertErr) {
       console.error(LOG_PREFIX, "8. watch_starts INSERT 실패 (관리자 목록용):", insertErr.message);
     } else {
