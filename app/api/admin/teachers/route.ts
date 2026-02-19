@@ -68,11 +68,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "강사 이름을 입력해 주세요." }, { status: 400 });
   }
 
-  // 강사 계정용 내부 이메일 생성: teacher_이름_랜덤@khj-online.com 형태
+  // 강사 계정용 내부 이메일 생성: teacher_영문only_랜덤@khj-online.com
+  // Supabase 이메일 검증이 ASCII만 허용하므로 한글·특수문자는 제거
   const baseName = fullName
     .replace(/\s+/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9가-힣]/g, "") || "teacher";
+    .replace(/[^a-z0-9]/g, "") || "teacher";
   const suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const email = `teacher_${baseName}_${suffix}@khj-online.com`;
   // 반드시 서비스 롤 키를 사용해서 관리자 권한으로 사용자 생성
