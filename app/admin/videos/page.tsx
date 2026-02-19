@@ -324,7 +324,7 @@ export default function AdminVideosPage() {
   async function handleDelete(id: string) {
     if (!supabase || !confirm("이 영상을 삭제할까요? 해당 영상에 대한 학생 배정이 자동으로 해제됩니다.")) return;
     const { data: affected } = await supabase.from("assignments").select("id").eq("video_id", id);
-    const assignmentIds = (affected ?? []).map((r) => r.id);
+    const assignmentIds = ((affected ?? []) as { id: string }[]).map((r) => r.id);
     await supabase.from("assignments").delete().eq("video_id", id);
     await supabase.from("videos").delete().eq("id", id);
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
@@ -347,7 +347,7 @@ export default function AdminVideosPage() {
     setBulkMessage(null);
     try {
       const { data: affected } = await supabase.from("assignments").select("id").in("video_id", selectedVideoIds);
-      const assignmentIds = (affected ?? []).map((r) => r.id);
+      const assignmentIds = ((affected ?? []) as { id: string }[]).map((r) => r.id);
       await supabase.from("assignments").delete().in("video_id", selectedVideoIds);
       const { error } = await supabase.from("videos").delete().in("id", selectedVideoIds);
       if (error) throw error;
