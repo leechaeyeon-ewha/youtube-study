@@ -70,12 +70,15 @@ export async function POST(req: Request) {
 
   // 강사용 계정은 외부 노출용 이메일이 필요 없으므로 내부용 랜덤 이메일 생성
   const email = `teacher_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@academy.local`;
+  // 반드시 서비스 롤 키를 사용해서 관리자 권한으로 사용자 생성
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   const { data: userData, error: createError } = await supabase.auth.admin.createUser({
     email,
     password,
+    // 이메일 인증 없이 바로 활성화
     email_confirm: true,
+    autoConfirm: true,
     user_metadata: { full_name: fullName, role: "teacher" },
   });
 
