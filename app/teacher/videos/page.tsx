@@ -44,6 +44,8 @@ export default function TeacherVideosPage() {
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [searchTitle, setSearchTitle] = useState("");
   const [activeTab, setActiveTab] = useState<"playlist" | "single">("playlist");
+  /** 재생목록 탭에서 펼친 재생목록: courseId (접히면 null) */
+  const [expandedPlaylistCourseKey, setExpandedPlaylistCourseKey] = useState<string | null>(null);
 
   async function load() {
     if (!supabase) {
@@ -353,33 +355,49 @@ export default function TeacherVideosPage() {
                 {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 재생목록이 없습니다."}
               </li>
             ) : (
-              filteredPlaylistGroups.map((g) => (
-                <li key={g.courseId!} className="px-6 py-4">
-                  <h3 className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
-                    {g.courseTitle} <span className="text-xs text-slate-500 dark:text-slate-400">({g.videos.length}개 영상)</span>
-                  </h3>
-                  <ul className="space-y-1">
-                    {g.videos.map((v) => (
-                      <li key={v.id} className="flex flex-wrap items-center justify-between gap-3">
-                        <span className="text-sm text-slate-800 dark:text-slate-100">
-                          {v.title || v.video_id}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAssignVideoId(assignVideoId === v.id ? null : v.id);
-                            setAssignStudentId("");
-                            setAssignMessage(null);
-                          }}
-                          className="rounded-lg bg-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
-                        >
-                          {assignVideoId === v.id ? "취소" : "배정"}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))
+              filteredPlaylistGroups.map((g) => {
+                const courseKey = g.courseId ?? "__none__";
+                const isExpanded = expandedPlaylistCourseKey === courseKey;
+                return (
+                  <li key={courseKey}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPlaylistCourseKey(isExpanded ? null : courseKey)}
+                      className="flex w-full items-center justify-between gap-2 px-6 py-4 text-left hover:bg-slate-50 dark:hover:bg-zinc-800/50"
+                    >
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                        {g.courseTitle}
+                      </span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        {g.videos.length}개 영상 · {isExpanded ? "접기" : "펼치기"}
+                      </span>
+                    </button>
+                    {isExpanded && (
+                      <ul className="space-y-1 border-t border-slate-100 bg-slate-50/50 px-6 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
+                        {g.videos.map((v) => (
+                          <li key={v.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                            <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-slate-100">
+                              {v.title || v.video_id}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAssignVideoId(assignVideoId === v.id ? null : v.id);
+                                setAssignStudentId("");
+                                setAssignMessage(null);
+                              }}
+                              className="shrink-0 rounded-lg bg-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                            >
+                              {assignVideoId === v.id ? "취소" : "배정"}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })
             )}
           </ul>
         ) : (

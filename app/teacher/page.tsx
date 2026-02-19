@@ -49,6 +49,9 @@ export default function TeacherDashboardPage() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [assignFromLibraryVideoId, setAssignFromLibraryVideoId] = useState<string | null>(null);
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [expandedLibraryCourseKey, setExpandedLibraryCourseKey] = useState<string | null>(null);
+  const [librarySearchTitle, setLibrarySearchTitle] = useState("");
+  const [assignPlaylistCourseKey, setAssignPlaylistCourseKey] = useState<string | null>(null);
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const [addFullName, setAddFullName] = useState("");
   const [addPassword, setAddPassword] = useState("");
@@ -118,8 +121,62 @@ export default function TeacherDashboardPage() {
   }
 
   useEffect(() => {
-    if (showAssignFromLibrary && assignUserId) loadLibrary();
+    if (showAssignFromLibrary && assignUserId) {
+      loadLibrary();
+      setExpandedLibraryCourseKey(null);
+    }
   }, [showAssignFromLibrary, assignUserId]);
+
+  /** 재생목록 전체 할당: 해당 목록의 모든 영상을 선택한 학생에게 한 번에 배정 (이미 배정된 건 스킵) */
+  async function handleAssignPlaylistToStudent(courseKey: string, videoIds: string[]) {
+    if (!assignUserId || !supabase || videoIds.length === 0) return;
+    setAssignPlaylistCourseKey(courseKey);
+    setAssignMessage(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setAssignMessage({ type: "error", text: "로그인이 필요합니다." });
+        return;
+      }
+      let inserted = 0;
+      let skipped = 0;
+      for (const videoId of videoIds) {
+        const res = await fetch("/api/teacher/assignments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ student_id: assignUserId, video_id: videoId }),
+        });
+        const resultData = await res.json().catch(() => ({})) as { id?: string; error?: string };
+        if (res.ok && resultData.id) {
+          inserted += 1;
+          fetch("/api/revalidate-student", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ assignmentIds: [resultData.id] }),
+            cache: "no-store",
+          }).catch(() => {});
+        } else {
+          if (resultData.error?.includes("이미")) skipped += 1;
+          else if (resultData.error) setAssignMessage({ type: "error", text: resultData.error });
+        }
+      }
+      setAssignMessage({
+        type: "success",
+        text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
+      });
+      load();
+    } catch (err: unknown) {
+      setAssignMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "재생목록 전체 할당에 실패했습니다.",
+      });
+    } finally {
+      setAssignPlaylistCourseKey(null);
+    }
+  }
 
   async function handleStudentClassChange(studentId: string, classId: string | null) {
     const { data: { session } } = await supabase!.auth.getSession();
@@ -460,52 +517,136 @@ export default function TeacherDashboardPage() {
                 )}
 
                 {assignUserId === s.id && (
-                  <div className="mt-4 rounded-lg bg-slate-50 p-4 dark:bg-zinc-800">
-                    {assignMessage && (
-                      <div
-                        className={`mb-3 rounded px-3 py-2 text-sm ${
-                          assignMessage.type === "error"
-                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                            : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                        }`}
-                      >
-                        {assignMessage.text}
-                      </div>
-                    )}
-                    <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-                      영상 라이브러리에서 배정할 영상을 선택하세요.
-                    </p>
-                    {libraryLoading ? (
-                      <div className="flex items-center gap-2 py-4">
-                        <LoadingSpinner />
-                        <span className="text-sm text-slate-500">로딩 중...</span>
-                      </div>
-                    ) : (
-                      <div className="max-h-60 space-y-2 overflow-y-auto">
-                        {libraryGroups.map((grp) => (
-                          <div key={grp.courseId ?? "none"} className="space-y-1">
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                              {grp.courseTitle}
-                            </span>
-                            <div className="flex flex-wrap gap-1">
-                              {grp.videos.map((v) => (
-                                <button
-                                  key={v.id}
-                                  type="button"
-                                  disabled={assignFromLibraryVideoId !== null}
-                                  onClick={() => handleAssignFromLibrary(v.id)}
-                                  className="rounded bg-slate-200 px-2 py-1 text-xs text-slate-800 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600 disabled:opacity-50"
-                                >
-                                  {assignFromLibraryVideoId === v.id ? "처리 중..." : v.title || v.video_id}
-                                </button>
-                              ))}
-                            </div>
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showAssignFromLibrary;
+                        setShowAssignFromLibrary(next);
+                        if (next) {
+                          loadLibrary();
+                          setExpandedLibraryCourseKey(null);
+                        }
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
+                    >
+                      {showAssignFromLibrary ? "등록된 목록 접기" : "영상 라이브러리에서 배정할 영상 선택"}
+                    </button>
+                    {showAssignFromLibrary && (
+                      <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-zinc-600 dark:bg-zinc-800">
+                        {assignMessage && (
+                          <div
+                            className={`mx-2 mt-2 rounded px-3 py-2 text-sm ${
+                              assignMessage.type === "error"
+                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                                : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                            }`}
+                          >
+                            {assignMessage.text}
                           </div>
-                        ))}
-                        {libraryGroups.length === 0 && (
-                          <p className="text-sm text-slate-500 dark:text-slate-400">
-                            등록된 영상이 없습니다. 영상 관리에서 새 영상을 등록할 수 있습니다.
+                        )}
+                        {libraryLoading ? (
+                          <div className="flex items-center gap-2 p-4">
+                            <LoadingSpinner />
+                            <span className="text-sm text-slate-500">로딩 중...</span>
+                          </div>
+                        ) : libraryGroups.length === 0 ? (
+                          <p className="p-4 text-sm text-slate-500 dark:text-slate-400">
+                            등록된 재생목록/동영상이 없습니다. 영상 관리에서 등록할 수 있습니다.
                           </p>
+                        ) : (
+                          <>
+                            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white p-2 dark:border-zinc-600 dark:bg-zinc-800">
+                              <input
+                                type="text"
+                                value={librarySearchTitle}
+                                onChange={(e) => setLibrarySearchTitle(e.target.value)}
+                                placeholder="제목으로 검색..."
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                              />
+                            </div>
+                            <ul className="divide-y divide-slate-200 dark:divide-zinc-600">
+                              {libraryGroups
+                                .map((grp) => {
+                                  const searchLower = librarySearchTitle.trim().toLowerCase();
+                                  const filteredVideos = searchLower
+                                    ? grp.videos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
+                                    : grp.videos;
+                                  return { ...grp, filteredVideos };
+                                })
+                                .filter((grp) => grp.filteredVideos.length > 0)
+                                .map((grp) => {
+                                  const courseKey = grp.courseId ?? "single";
+                                  const isExpanded = expandedLibraryCourseKey === courseKey;
+                                  return (
+                                    <li key={courseKey}>
+                                      <div className="flex w-full items-center justify-between gap-2 bg-slate-50 px-3 py-2.5 dark:bg-zinc-700">
+                                        <button
+                                          type="button"
+                                          onClick={() => setExpandedLibraryCourseKey(isExpanded ? null : courseKey)}
+                                          className="flex flex-1 items-center justify-between text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                        >
+                                          <span>{grp.courseTitle}</span>
+                                          <span className="text-slate-400 dark:text-slate-500">
+                                            {grp.filteredVideos.length}개 · {isExpanded ? "접기" : "펼치기"}
+                                          </span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={assignPlaylistCourseKey === courseKey}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleAssignPlaylistToStudent(courseKey, grp.videos.map((v) => v.id));
+                                          }}
+                                          className="shrink-0 rounded bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                                        >
+                                          {assignPlaylistCourseKey === courseKey ? "할당 중…" : "재생목록 전체 할당"}
+                                        </button>
+                                      </div>
+                                      {isExpanded && (
+                                        <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
+                                          {grp.filteredVideos.map((v) => (
+                                            <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                                              <span className="min-w-0 truncate text-sm text-slate-800 dark:text-slate-200" title={v.title ?? undefined}>
+                                                {v.title || v.video_id}
+                                              </span>
+                                              <a
+                                                href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                                              >
+                                                보기
+                                              </a>
+                                              <button
+                                                type="button"
+                                                disabled={assignFromLibraryVideoId === v.id}
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  handleAssignFromLibrary(v.id);
+                                                }}
+                                                className="shrink-0 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                                              >
+                                                {assignFromLibraryVideoId === v.id ? "할당 중..." : "할당"}
+                                              </button>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                            </ul>
+                            {librarySearchTitle.trim() &&
+                              libraryGroups.every((grp) => {
+                                const searchLower = librarySearchTitle.trim().toLowerCase();
+                                return !grp.videos.some((v) => (v.title || "").toLowerCase().includes(searchLower));
+                              }) && (
+                                <p className="p-4 text-sm text-slate-500 dark:text-slate-400">제목에 맞는 영상이 없습니다.</p>
+                              )}
+                          </>
                         )}
                       </div>
                     )}
