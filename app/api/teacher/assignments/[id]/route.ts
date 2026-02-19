@@ -34,7 +34,8 @@ async function assertAssignmentBelongsToTeacher(
     .eq("id", userId)
     .eq("role", "student")
     .single();
-  return (student as { teacher_id?: string | null })?.teacher_id === teacherId;
+  if (!student) return false;
+  return (student as { teacher_id?: string | null }).teacher_id === teacherId;
 }
 
 /** 강사: 본인 담당 학생의 배정만 수정 (우선 학습, 스킵 방지) */
