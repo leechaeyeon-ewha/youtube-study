@@ -76,9 +76,8 @@ export async function POST(req: Request) {
   const { data: userData, error: createError } = await supabase.auth.admin.createUser({
     email,
     password,
-    // 이메일 인증 없이 바로 활성화
+    // 이메일 인증을 이미 완료된 것으로 처리
     email_confirm: true,
-    autoConfirm: true,
     user_metadata: { full_name: fullName, role: "teacher" },
   });
 
