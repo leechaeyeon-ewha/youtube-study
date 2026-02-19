@@ -68,8 +68,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "강사 이름을 입력해 주세요." }, { status: 400 });
   }
 
-  // 강사용 계정은 외부 노출용 이메일이 필요 없으므로 내부용 랜덤 이메일 생성
-  const email = `teacher_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@academy.local`;
+  // 강사 계정용 내부 이메일 생성: teacher_이름_랜덤@khj-online.com 형태
+  const baseName = fullName
+    .replace(/\s+/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]/g, "") || "teacher";
+  const suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const email = `teacher_${baseName}_${suffix}@khj-online.com`;
   // 반드시 서비스 롤 키를 사용해서 관리자 권한으로 사용자 생성
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
@@ -82,10 +87,19 @@ export async function POST(req: Request) {
   });
 
   if (createError) {
-    if (createError.message?.toLowerCase().includes("already")) {
-      return NextResponse.json({ error: "이미 사용 중인 아이디입니다." }, { status: 400 });
+    // 서버 로그에 상세 에러 출력
+    console.error("[admin/teachers] createUser error:", createError);
+    const msg = (createError.message || "").toLowerCase();
+    if (msg.includes("duplicate") || msg.includes("already")) {
+      return NextResponse.json(
+        { error: "이미 등록된 강사가 있거나 이메일이 중복되었습니다." },
+        { status: 400 }
+      );
     }
-    return NextResponse.json({ error: createError.message }, { status: 400 });
+    return NextResponse.json(
+      { error: `강사 계정을 생성하지 못했습니다: ${createError.message}` },
+      { status: 400 }
+    );
   }
 
   if (!userData.user) {
