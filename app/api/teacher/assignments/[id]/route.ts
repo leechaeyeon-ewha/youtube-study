@@ -88,7 +88,7 @@ export async function DELETE(
     return NextResponse.json({ error: "배정 ID가 필요합니다." }, { status: 400 });
   }
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const allowed = await assertAssignmentBelongsToTeacher(supabase, assignmentId, teacher.id);
+  const allowed = await assertAssignmentBelongsToTeacher(supabase as any, assignmentId, teacher.id);
   if (!allowed) {
     return NextResponse.json({ error: "해당 배정을 해제할 권한이 없습니다." }, { status: 403 });
   }
