@@ -39,7 +39,7 @@ export async function GET(req: Request) {
   return NextResponse.json(data ?? []);
 }
 
-/** 관리자 전용: 강사 등록 (아이디, 초기 비밀번호, 강사 이름). 이메일은 아이디@academy.local 로 자동 생성 */
+/** 관리자 전용: 강사 등록 (초기 비밀번호, 강사 이름). 이메일은 내부용으로 자동 생성 */
 export async function POST(req: Request) {
   const admin = await requireAdmin(req);
   if (!admin) {
@@ -52,22 +52,15 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { login_id?: string; password?: string; full_name?: string };
+  let body: { password?: string; full_name?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "요청 본문을 읽을 수 없습니다." }, { status: 400 });
   }
-  const loginId = typeof body.login_id === "string" ? body.login_id.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
   const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
 
-  if (!loginId) {
-    return NextResponse.json({ error: "아이디를 입력해 주세요." }, { status: 400 });
-  }
-  if (!/^[a-z0-9_]+$/.test(loginId)) {
-    return NextResponse.json({ error: "아이디는 영문 소문자, 숫자, 언더스코어만 사용 가능합니다." }, { status: 400 });
-  }
   if (!password || password.length < 4) {
     return NextResponse.json({ error: "비밀번호는 4자 이상 입력해 주세요." }, { status: 400 });
   }
@@ -75,7 +68,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "강사 이름을 입력해 주세요." }, { status: 400 });
   }
 
-  const email = `${loginId}@academy.local`;
+  // 강사용 계정은 외부 노출용 이메일이 필요 없으므로 내부용 랜덤 이메일 생성
+  const email = `teacher_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@academy.local`;
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   const { data: userData, error: createError } = await supabase.auth.admin.createUser({
@@ -134,6 +128,5 @@ export async function POST(req: Request) {
     id: userData.user.id,
     full_name: fullName,
     email,
-    login_id: loginId,
   });
 }

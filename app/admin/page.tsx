@@ -99,7 +99,6 @@ export default function AdminDashboardPage() {
   /** 목록 탭: 학생 | 강사 */
   const [listTab, setListTab] = useState<"students" | "teachers">("students");
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
-  const [addTeacherLoginId, setAddTeacherLoginId] = useState("");
   const [addTeacherPassword, setAddTeacherPassword] = useState("");
   const [addTeacherName, setAddTeacherName] = useState("");
   const [addTeacherLoading, setAddTeacherLoading] = useState(false);
@@ -206,11 +205,6 @@ export default function AdminDashboardPage() {
   async function handleAddTeacher(e: React.FormEvent) {
     e.preventDefault();
     setAddTeacherMessage(null);
-    const loginId = addTeacherLoginId.trim().toLowerCase();
-    if (!loginId) {
-      setAddTeacherMessage({ type: "error", text: "아이디를 입력해 주세요." });
-      return;
-    }
     if (!addTeacherPassword || addTeacherPassword.length < 4) {
       setAddTeacherMessage({ type: "error", text: "비밀번호는 4자 이상 입력해 주세요." });
       return;
@@ -229,7 +223,6 @@ export default function AdminDashboardPage() {
           Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
         },
         body: JSON.stringify({
-          login_id: loginId,
           password: addTeacherPassword,
           full_name: addTeacherName.trim(),
         }),
@@ -237,7 +230,6 @@ export default function AdminDashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "강사 등록 실패");
       setAddTeacherMessage({ type: "success", text: `${addTeacherName.trim()} 강사가 등록되었습니다.` });
-      setAddTeacherLoginId("");
       setAddTeacherPassword("");
       setAddTeacherName("");
       dashboardCache = null;
@@ -1301,16 +1293,6 @@ export default function AdminDashboardPage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="mb-4 text-lg font-semibold text-slate-800 dark:text-white">강사 등록</h2>
             <form onSubmit={handleAddTeacher} className="flex flex-wrap items-end gap-4">
-              <div className="min-w-[120px]">
-                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">아이디</label>
-                <input
-                  type="text"
-                  value={addTeacherLoginId}
-                  onChange={(e) => setAddTeacherLoginId(e.target.value)}
-                  placeholder="영문 소문자, 숫자"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-                />
-              </div>
               <div className="min-w-[160px]">
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">초기 비밀번호</label>
                 <input

@@ -14,7 +14,6 @@ function LoginPageContent() {
   const [mounted, setMounted] = useState(false);
   const [who, setWho] = useState<Who>(null);
   const [email, setEmail] = useState("");
-  const [teacherLoginId, setTeacherLoginId] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
@@ -96,16 +95,27 @@ function LoginPageContent() {
     setMessage(null);
     setLoading(true);
     try {
-      const loginId = teacherLoginId.trim().toLowerCase();
-      if (!loginId) {
-        setMessage({ type: "error", text: "아이디를 입력해 주세요." });
+      const name = fullName.trim();
+      if (!name) {
+        setMessage({ type: "error", text: "이름을 입력해 주세요." });
         setLoading(false);
         return;
       }
-      const teacherEmail = `${loginId}@academy.local`;
-      const { data, error } = await supabase.auth.signInWithPassword({ email: teacherEmail, password });
+      // 강사 이름으로 이메일 조회
+      const res = await fetch("/api/auth/teacher-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "강사 정보를 찾을 수 없습니다.");
+
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({
+        email: data?.email ?? "",
+        password,
+      });
       if (error) throw error;
-      if (data?.session) {
+      if (signInData?.session) {
         await redirectByRole();
         return;
       }
@@ -114,7 +124,7 @@ function LoginPageContent() {
     } catch (err: unknown) {
       setMessage({
         type: "error",
-        text: err instanceof Error ? err.message : "로그인에 실패했습니다.",
+        text: err instanceof Error ? err.message : "이름 또는 비밀번호가 맞지 않습니다.",
       });
     } finally {
       setLoading(false);
@@ -320,56 +330,6 @@ function LoginPageContent() {
           <form onSubmit={handleTeacherSubmit} className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                아이디
-              </label>
-              <input
-                type="text"
-                value={teacherLoginId}
-                onChange={(e) => setTeacherLoginId(e.target.value)}
-                placeholder="강사 아이디"
-                required
-                autoComplete="username"
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                비밀번호
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                autoComplete="current-password"
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-              />
-            </div>
-            {message && (
-              <div
-                className={`rounded-lg px-4 py-3 text-sm ${
-                  message.type === "error"
-                    ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
-                    : "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-                }`}
-              >
-                {message.text}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-lg bg-indigo-600 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {loading ? "로그인 중..." : "로그인"}
-            </button>
-          </form>
-        ) : (
-          <>
-          <form onSubmit={handleStudentSubmit} className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                 이름
               </label>
               <input
@@ -414,6 +374,10 @@ function LoginPageContent() {
             >
               {loading ? "로그인 중..." : "로그인"}
             </button>
+          </form>
+        ) : (
+          <>
+          <form onSubmit={handleStudentSubmit} className="space-y-4">
             <p className="text-center">
               <a
                 href="/forgot-password"
