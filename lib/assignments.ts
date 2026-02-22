@@ -12,6 +12,6 @@ export const ASSIGNMENT_SELECT_ADMIN =
 export const ASSIGNMENT_SELECT_STUDENT_LIST =
   "id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, videos(id, title, video_id, course_id, courses(id, title))";
 
-/** 시청 페이지 단일 배정: 진도 저장·플레이어용 (last_position, prevent_skip 포함) */
+/** 시청 페이지 단일 배정: 진도 저장·플레이어용 (last_position, prevent_skip, watched_seconds 포함) */
 export const ASSIGNMENT_SELECT_WATCH =
-  "id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)";
+  "id, is_completed, progress_percent, last_position, prevent_skip, watched_seconds, videos(id, title, video_id)";

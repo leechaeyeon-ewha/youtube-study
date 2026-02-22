@@ -391,14 +391,57 @@ export default function TeacherAssignPage() {
                             const selectedKey = expandedPlaylistByStudent[userId];
                             const showPlaylistList = selectedKey == null;
 
+                            /** 진도별 보기 버튼(전체/완료/미완료) — 항상 표시되어 다른 필터로 전환 가능 */
+                            const progressFilterButtons = (
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "all" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "all"
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  전체 ({list.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "completed" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "completed"
+                                      ? "bg-green-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  완료 ({completedCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "incomplete" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "incomplete"
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  미완료 ({incompleteCount})
+                                </button>
+                              </div>
+                            );
+
                             if (filteredList.length === 0) {
                               return (
-                                <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 dark:border-zinc-700 dark:bg-zinc-800/30 dark:text-slate-400">
-                                  {filter === "all"
-                                    ? "배정된 영상이 없습니다."
-                                    : filter === "completed"
-                                      ? "완료된 영상이 없습니다."
-                                      : "미완료 영상이 없습니다."}
+                                <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
+                                  {progressFilterButtons}
+                                  <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                                    {filter === "all"
+                                      ? "배정된 영상이 없습니다."
+                                      : filter === "completed"
+                                        ? "완료된 영상이 없습니다."
+                                        : "미완료 영상이 없습니다."}
+                                  </p>
                                 </div>
                               );
                             }
@@ -406,44 +449,7 @@ export default function TeacherAssignPage() {
                             if (showPlaylistList) {
                               return (
                                 <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
-                                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "all" }))}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                                          filter === "all"
-                                            ? "bg-indigo-600 text-white"
-                                            : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                        }`}
-                                      >
-                                        전체 ({list.length})
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "completed" }))}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                                          filter === "completed"
-                                            ? "bg-green-600 text-white"
-                                            : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                        }`}
-                                      >
-                                        완료 ({completedCount})
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "incomplete" }))}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                                          filter === "incomplete"
-                                            ? "bg-amber-600 text-white"
-                                            : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
-                                        }`}
-                                      >
-                                        미완료 ({incompleteCount})
-                                      </button>
-                                    </div>
-                                  </div>
+                                  {progressFilterButtons}
                                   <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                                     재생목록을 선택하면 해당 목록에 포함된 배정 영상들을 볼 수 있습니다. (재생목록에 속하지 않은 개별 영상은 &quot;기타 동영상&quot;에 모입니다.)
                                   </p>
@@ -473,7 +479,7 @@ export default function TeacherAssignPage() {
                             return (
                               <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
                                 <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
-                                  <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
+                                  {progressFilterButtons}
                                   <button
                                     type="button"
                                     onClick={() => setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }))}

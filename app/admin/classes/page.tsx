@@ -78,6 +78,27 @@ export default function AdminClassesPage() {
   const [addToClassLoading, setAddToClassLoading] = useState(false);
   const [addToClassMessage, setAddToClassMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
+  /** Supabase 기본 최대 행 수(1000)를 넘어도 배정을 전부 가져오기 위해 1000개 단위로 페이지 조회 후 합침 */
+  async function fetchAllAssignmentsForClasses(): Promise<AssignmentWithVideo[]> {
+    if (!supabase) return [];
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    const all: AssignmentWithVideo[] = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from("assignments")
+        .select("id, user_id, progress_percent, videos(id, title, video_id)")
+        .order("id")
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (error) return all.length > 0 ? all : [];
+      const list = ((data ?? []) as unknown) as AssignmentWithVideo[];
+      all.push(...list);
+      if (list.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    return all;
+  }
+
   async function load() {
     if (!supabase) {
       setLoading(false);
@@ -95,9 +116,9 @@ export default function AdminClassesPage() {
 
     const { data: { session } } = await supabase.auth.getSession();
     const authHeaders: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
-    const [studentsRes, assignmentsRes, classesRes, videosRes] = await Promise.all([
+    const [studentsRes, assignmentsList, classesRes, videosRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
-      supabase.from("assignments").select("id, user_id, progress_percent, videos(id, title, video_id)"),
+      fetchAllAssignmentsForClasses(),
       supabase.from("classes").select("id, title").order("title"),
       supabase.from("videos").select("id, title, video_id, course_id, courses(id, title)").order("created_at", { ascending: false }),
     ]);
@@ -108,8 +129,8 @@ export default function AdminClassesPage() {
     setClasses(nextClasses);
 
     let nextByUser: Record<string, AssignmentWithVideo[]> = {};
-    if (!assignmentsRes.error && assignmentsRes.data) {
-      const list = (assignmentsRes.data as unknown) as AssignmentWithVideo[];
+    if (assignmentsList.length > 0) {
+      const list = assignmentsList;
       list.forEach((a) => {
         if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
         nextByUser[a.user_id].push(a);
@@ -118,7 +139,7 @@ export default function AdminClassesPage() {
     }
 
     let nextProgress: Record<string, number> = {};
-    if (studentsList.length > 0 && !assignmentsRes.error && !classesRes?.error) {
+    if (studentsList.length > 0 && !classesRes?.error) {
       const classList = (classesRes?.data ?? []) as ClassRow[];
       classList.forEach((c) => {
         const studentIds = studentsList.filter((s) => s.class_id === c.id).map((s) => s.id);

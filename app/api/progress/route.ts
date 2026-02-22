@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
-  let body: { assignmentId?: string; progress_percent?: number; is_completed?: boolean; last_position?: number; last_watched_at?: string };
+  let body: { assignmentId?: string; progress_percent?: number; is_completed?: boolean; last_position?: number; last_watched_at?: string; watched_seconds?: number };
   try {
     body = await req.json();
   } catch {
@@ -38,6 +38,7 @@ export async function POST(req: Request) {
   const isCompleted = body?.is_completed;
   const lastPosition = body?.last_position;
   const lastWatchedAt = body?.last_watched_at;
+  const watchedSeconds = body?.watched_seconds;
   if (
     progressPercent == null ||
     !Number.isFinite(Number(progressPercent)) ||
@@ -48,6 +49,9 @@ export async function POST(req: Request) {
   }
   if (lastPosition != null && (!Number.isFinite(Number(lastPosition)) || Number(lastPosition) < 0)) {
     return NextResponse.json({ error: "last_position이 올바르지 않습니다." }, { status: 400 });
+  }
+  if (watchedSeconds != null && (!Number.isFinite(Number(watchedSeconds)) || Number(watchedSeconds) < 0)) {
+    return NextResponse.json({ error: "watched_seconds가 올바르지 않습니다." }, { status: 400 });
   }
 
   const { data: row, error: fetchErr } = await supabase
@@ -76,14 +80,19 @@ export async function POST(req: Request) {
       .eq("user_id", user.id);
   }
 
+  const updatePayload: Record<string, unknown> = {
+    progress_percent: Number(progressPercent),
+    is_completed: Boolean(isCompleted),
+    last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
+    last_watched_at: lastWatchedAt ?? new Date().toISOString(),
+  };
+  if (watchedSeconds != null && Number.isFinite(watchedSeconds)) {
+    updatePayload.watched_seconds = Number(watchedSeconds);
+  }
+
   const { error: updateErr } = await supabase
     .from("assignments")
-    .update({
-      progress_percent: Number(progressPercent),
-      is_completed: Boolean(isCompleted),
-      last_position: lastPosition != null ? Number(lastPosition) : row.last_position ?? 0,
-      last_watched_at: lastWatchedAt ?? new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", assignmentId as string)
     .eq("user_id", user.id);
 

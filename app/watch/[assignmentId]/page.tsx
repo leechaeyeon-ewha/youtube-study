@@ -20,6 +20,7 @@ interface AssignmentRow {
   progress_percent?: number;
   last_position?: number;
   prevent_skip?: boolean;
+  watched_seconds?: number;
   videos: Video | null;
 }
 
@@ -225,6 +226,7 @@ export default function WatchPage() {
               videoId={video.video_id}
               assignmentId={assignment.id as string}
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
+              initialWatchedSeconds={typeof assignment.watched_seconds === "number" ? assignment.watched_seconds : 0}
               preventSkip={assignment.prevent_skip !== false}
               onFirstProgress={handleRecordStartedAt}
             />

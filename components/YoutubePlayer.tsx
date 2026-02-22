@@ -47,7 +47,9 @@ interface Props {
   videoId: string;
   assignmentId: string;
   initialPosition?: number;
-  /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 */
+  /** 실제 시청한 누적 시간(초). 스킵 허용 시 진도율 = (watched_seconds / 영상길이) * 100 */
+  initialWatchedSeconds?: number;
+  /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 — 허용 시 실제 재생한 시간만 진도에 반영 */
   preventSkip?: boolean;
   /** 진도율이 1% 이상이 되는 순간 한 번만 호출 (최초 시청 시작 기록용) */
   onFirstProgress?: () => void;
@@ -82,7 +84,7 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
 
 const FIRST_PROGRESS_THRESHOLD = 1; // 1% 이상이면 최초 시청 시작으로 간주
 
-export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, preventSkip = true, onFirstProgress }: Props) {
+export default function YoutubePlayer({ videoId, assignmentId, initialPosition = 0, initialWatchedSeconds = 0, preventSkip = true, onFirstProgress }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -109,6 +111,10 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const justBecameVisibleRef = useRef(false);
   /** 진도 1% 이상 시 onFirstProgress 한 번만 호출했는지 */
   const hasFiredFirstProgressRef = useRef(false);
+  /** 스킵 허용 시: 실제 재생한 누적 시간(초). 진도율 = totalWatchedSeconds / duration * 100 */
+  const totalWatchedSecondsRef = useRef(initialWatchedSeconds);
+  /** 스킵 허용 시: 마지막으로 저장한 시점의 영상 위치(초). 시청 구간 전송용 */
+  const lastSaveVideoPositionRef = useRef(initialPosition);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -116,21 +122,28 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   }, [initialPosition]);
 
   useEffect(() => {
+    totalWatchedSecondsRef.current = initialWatchedSeconds;
+  }, [initialWatchedSeconds]);
+
+  useEffect(() => {
+    lastSaveVideoPositionRef.current = initialPosition;
+  }, [initialPosition]);
+
+  useEffect(() => {
     setIsClient(true);
   }, []);
 
   const saveProgress = useCallback(
-    async (percent: number, completed: boolean, playedSeconds: number) => {
+    async (percent: number, completed: boolean, lastPositionSeconds: number, watchedSeconds: number) => {
       if (!supabase || !assignmentId?.trim()) return;
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
-      if (!Number.isFinite(playedSeconds) || playedSeconds < 0) return;
-      if (percent === 0 && playedSeconds === 0 && !completed) return;
+      if (!Number.isFinite(lastPositionSeconds) || lastPositionSeconds < 0) return;
+      if (!Number.isFinite(watchedSeconds) || watchedSeconds < 0) return;
+      if (percent === 0 && lastPositionSeconds === 0 && watchedSeconds === 0 && !completed) return;
 
       const now = new Date().toISOString();
       const progressPercent = completed ? 100 : Math.min(100, Math.round(percent * 100) / 100);
-      const lastPosition = playedSeconds;
       if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) return;
-      if (!Number.isFinite(lastPosition) || lastPosition < 0) return;
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -145,8 +158,35 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             assignmentId: assignmentId as string,
             progress_percent: progressPercent,
             is_completed: completed,
-            last_position: lastPosition,
+            last_position: lastPositionSeconds,
             last_watched_at: now,
+            watched_seconds: watchedSeconds,
+          }),
+        });
+      } catch (_: unknown) {
+        // ignore
+      }
+    },
+    [assignmentId]
+  );
+
+  /** 스킵 허용 시: 시청 구간(몇 분~몇 분) 저장 — 관리자 상세에서 확인용 */
+  const sendWatchSegment = useCallback(
+    async (startSec: number, endSec: number) => {
+      if (!supabase || !assignmentId?.trim()) return;
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        await fetch("/api/watch-segments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            assignmentId: assignmentId as string,
+            segments: [{ start_sec: startSec, end_sec: endSec }],
           }),
         });
       } catch (_: unknown) {
@@ -332,13 +372,23 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
             }
             return;
           }
+        } else {
+          // 스킵 허용: 실제 재생한 시간만 누적 (구간 스킵 시 delta가 크면 재생이 아닌 seek이므로 제외)
+          const delta = current - prevCurrent;
+          const reasonableDelta = delta > 0 && delta <= 2 ? delta : 0;
+          if (reasonableDelta > 0 && duration > 0) {
+            const capped = Math.min(duration, totalWatchedSecondsRef.current + reasonableDelta);
+            totalWatchedSecondsRef.current = capped;
+          }
         }
 
         if (current > maxWatchedRef.current) {
           maxWatchedRef.current = current;
         }
 
-        const percent = duration > 0 ? current / duration : 0;
+        const percent = preventSkip
+          ? (duration > 0 ? current / duration : 0)
+          : (duration > 0 ? totalWatchedSecondsRef.current / duration : 0);
         if (!Number.isFinite(percent) || percent < 0 || percent > 1) return;
         setProgressPercent(percent * 100);
 
@@ -351,19 +401,36 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           }
         }
 
+        const watchedSec = preventSkip ? maxWatchedRef.current : totalWatchedSecondsRef.current;
+        const lastPos = preventSkip ? maxWatchedRef.current : current;
+
         if (percent >= COMPLETE_THRESHOLD) {
-          saveProgress(100, true, current);
+          if (!preventSkip && current > lastSaveVideoPositionRef.current) {
+            const segmentDuration = current - lastSaveVideoPositionRef.current;
+            if (segmentDuration <= 6) {
+              sendWatchSegment(lastSaveVideoPositionRef.current, current);
+            }
+            lastSaveVideoPositionRef.current = current;
+          }
+          saveProgress(100, true, lastPos, watchedSec);
           lastSavedPercentRef.current = 100;
           return;
         }
 
         const now = Date.now();
         if (now - lastSaveTimeRef.current >= PROGRESS_SAVE_INTERVAL_MS) {
+          lastSaveTimeRef.current = now;
+          if (!preventSkip && current > lastSaveVideoPositionRef.current) {
+            const segmentDuration = current - lastSaveVideoPositionRef.current;
+            if (segmentDuration <= 6) {
+              sendWatchSegment(lastSaveVideoPositionRef.current, current);
+            }
+            lastSaveVideoPositionRef.current = current;
+          }
           const toSave = Math.min(100, Math.round(percent * 100 * 100) / 100);
           if (Number.isFinite(toSave) && toSave >= 0 && toSave > lastSavedPercentRef.current) {
-            saveProgress(toSave, false, current);
+            saveProgress(toSave, false, lastPos, watchedSec);
             lastSavedPercentRef.current = toSave;
-            lastSaveTimeRef.current = now;
           }
         }
       } catch (_err: unknown) {
@@ -377,7 +444,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         progressIntervalRef.current = null;
       }
     };
-  }, [ready, assignmentId, saveProgress, preventSkip]);
+  }, [ready, assignmentId, saveProgress, sendWatchSegment, preventSkip]);
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
