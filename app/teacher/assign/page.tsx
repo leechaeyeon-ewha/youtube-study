@@ -66,6 +66,12 @@ export default function TeacherAssignPage() {
   const [watchStartsError, setWatchStartsError] = useState<string | null>(null);
   const [watchStartsAssignmentId, setWatchStartsAssignmentId] = useState<string | null>(null);
   const [watchStarts, setWatchStarts] = useState<{ id: string; started_at: string }[]>([]);
+  /** 시청 구간 확인 (스킵 허용 배정용) */
+  const [watchSegmentsOpen, setWatchSegmentsOpen] = useState(false);
+  const [watchSegmentsLoading, setWatchSegmentsLoading] = useState(false);
+  const [watchSegmentsError, setWatchSegmentsError] = useState<string | null>(null);
+  const [watchSegmentsAssignmentId, setWatchSegmentsAssignmentId] = useState<string | null>(null);
+  const [watchSegments, setWatchSegments] = useState<{ start_sec: number; end_sec: number }[]>([]);
 
   function formatLastWatched(value: string | null | undefined): string {
     if (value == null || value === "") return "-";
@@ -112,6 +118,43 @@ export default function TeacherAssignPage() {
     } finally {
       setWatchStartsLoading(false);
     }
+  }
+
+  /** 시청 구간 확인 (스킵 허용 배정일 때만: 영상 몇 분~몇 분 시청했는지) */
+  async function handleToggleWatchSegments(assignmentId: string) {
+    if (!supabase) return;
+    if (watchSegmentsOpen && watchSegmentsAssignmentId === assignmentId) {
+      setWatchSegmentsOpen(false);
+      return;
+    }
+    setWatchSegmentsOpen(true);
+    setWatchSegmentsAssignmentId(assignmentId);
+    setWatchSegmentsLoading(true);
+    setWatchSegmentsError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/teacher/watch-segments?assignmentId=${encodeURIComponent(assignmentId)}`, { headers, cache: "no-store" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string } | { start_sec: number; end_sec: number }[];
+      if (!res.ok) {
+        const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
+        setWatchSegmentsError(errMsg ?? "시청 구간을 불러오지 못했습니다.");
+        return;
+      }
+      const list = Array.isArray(data) ? data : [];
+      setWatchSegments(list);
+    } catch (err: unknown) {
+      setWatchSegmentsError(err instanceof Error ? err.message : "시청 구간을 불러오지 못했습니다.");
+    } finally {
+      setWatchSegmentsLoading(false);
+    }
+  }
+
+  function formatSegmentTime(sec: number): string {
+    const m = Math.floor(Number(sec) / 60);
+    const s = Math.floor(Number(sec) % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
   async function load() {
@@ -687,6 +730,8 @@ export default function TeacherAssignPage() {
               const a = detailModalAssignment;
               const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
               const isCurrentAssignment = watchStartsAssignmentId === a.id;
+              const isSegmentsCurrent = watchSegmentsAssignmentId === a.id;
+              const showSegmentsSection = a.prevent_skip === false;
               return (
                 <dl className="space-y-3 text-sm">
                   <div>
@@ -749,6 +794,45 @@ export default function TeacherAssignPage() {
                       )}
                     </dd>
                   </div>
+                  {showSegmentsSection && (
+                    <div>
+                      <dt className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                        <span>시청 구간 (몇 분~몇 분)</span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleWatchSegments(a.id)}
+                          className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-800"
+                        >
+                          {watchSegmentsOpen && isSegmentsCurrent ? "목록 접기" : "시청 구간 확인"}
+                        </button>
+                      </dt>
+                      <dd className="mt-1 text-slate-800 dark:text-slate-200">
+                        {watchSegmentsOpen && isSegmentsCurrent ? (
+                          watchSegmentsLoading ? (
+                            <span className="text-sm text-slate-500 dark:text-slate-400">불러오는 중...</span>
+                          ) : watchSegmentsError ? (
+                            <span className="text-sm text-red-600 dark:text-red-400" title={watchSegmentsError}>
+                              {watchSegmentsError}
+                            </span>
+                          ) : watchSegments.length === 0 ? (
+                            <span className="text-sm text-slate-500 dark:text-slate-400">
+                              시청 구간 기록이 없습니다. (스킵 허용 상태에서 재생한 구간만 저장. 테이블이 없으면 migration_watch_segments.sql 실행)
+                            </span>
+                          ) : (
+                            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
+                              {watchSegments.map((seg, i) => (
+                                <li key={i} className="text-slate-700 dark:text-slate-200">
+                                  {formatSegmentTime(seg.start_sec)} ~ {formatSegmentTime(seg.end_sec)} 시청
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                        ) : (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">버튼을 눌러 영상의 몇 분~몇 분을 시청했는지 확인하세요.</span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
                 </dl>
               );
             })()}
@@ -760,6 +844,9 @@ export default function TeacherAssignPage() {
                   setWatchStartsOpen(false);
                   setWatchStartsAssignmentId(null);
                   setWatchStarts([]);
+                  setWatchSegmentsOpen(false);
+                  setWatchSegmentsAssignmentId(null);
+                  setWatchSegments([]);
                 }}
                 className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-slate-200 dark:hover:bg-zinc-700"
               >
