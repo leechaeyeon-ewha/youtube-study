@@ -733,7 +733,7 @@ export default function TeacherAssignPage() {
                           </span>
                         ) : watchStarts.length === 0 ? (
                           <span className="text-sm text-slate-500 dark:text-slate-400">
-                            학습 시작 기록이 없습니다.
+                            학습 시작 기록이 없습니다. (테이블이 없으면 Supabase에서 migration_watch_starts.sql 실행)
                           </span>
                         ) : (
                           <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">

@@ -62,6 +62,10 @@ export async function GET(req: Request) {
     .order("started_at", { ascending: false });
 
   if (error) {
+    const msg = error.message ?? "";
+    if (msg.includes("could not find the table") || msg.includes("watch_starts") || msg.includes("does not exist")) {
+      return NextResponse.json([]);
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   return NextResponse.json(data ?? []);

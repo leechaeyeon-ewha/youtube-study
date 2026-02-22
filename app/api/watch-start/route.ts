@@ -50,12 +50,29 @@ export async function POST(req: Request) {
   }
   console.log(LOG_PREFIX, "4. assignmentId:", assignmentId);
 
-  const { data: assignment, error: fetchErr } = await supabase
+  let assignment: { id: string; user_id: string; started_at?: string | null } | null = null;
+  let fetchErr: { message?: string; code?: string } | null = null;
+
+  const { data: firstRow, error: firstErr } = await supabase
     .from("assignments")
     .select("id, user_id, started_at")
     .eq("id", assignmentId as string)
     .eq("user_id", user.id)
     .single();
+
+  if (firstErr && (firstErr.message?.includes("started_at") || firstErr.message?.includes("does not exist") || firstErr.code === "42703")) {
+    const { data: fallbackRow, error: fallbackErr } = await supabase
+      .from("assignments")
+      .select("id, user_id")
+      .eq("id", assignmentId as string)
+      .eq("user_id", user.id)
+      .single();
+    assignment = fallbackRow as typeof assignment;
+    fetchErr = fallbackErr;
+  } else {
+    assignment = firstRow as typeof assignment;
+    fetchErr = firstErr;
+  }
 
   if (fetchErr || !assignment) {
     console.error(LOG_PREFIX, "5. assignments 행 조회 실패:", fetchErr?.message ?? "no data", "code:", fetchErr?.code);
@@ -64,7 +81,8 @@ export async function POST(req: Request) {
   console.log(LOG_PREFIX, "5. assignment 행 존재함, started_at 현재값:", assignment.started_at ?? "null");
 
   const now = new Date().toISOString();
-  const isFirstTime = assignment.started_at == null || assignment.started_at === "";
+  const hasStartedAtColumn = "started_at" in assignment;
+  const isFirstTime = hasStartedAtColumn && (assignment.started_at == null || assignment.started_at === "");
 
   if (isFirstTime) {
     console.log(LOG_PREFIX, "6. assignments.started_at 업데이트 시도:", now);
@@ -79,21 +97,19 @@ export async function POST(req: Request) {
       const msg = updateErr.message ?? "";
       const noColumn = msg.includes("started_at") || updateErr.code === "42703";
       console.error(LOG_PREFIX, "7. assignments 업데이트 실패:", updateErr.code, msg);
-      return NextResponse.json(
-        {
-          error: noColumn
-            ? "started_at 컬럼이 없습니다. Supabase에서 supabase/migration_assignments_started_at.sql 을 실행해 주세요."
-            : "기록에 실패했습니다.",
-        },
-        { status: noColumn ? 503 : 500 }
-      );
+      if (noColumn) {
+        console.warn(LOG_PREFIX, "7. started_at 컬럼 없음 — watch_starts만 기록 시도");
+      } else {
+        return NextResponse.json({ error: "기록에 실패했습니다." }, { status: 500 });
+      }
+    } else {
+      console.log(LOG_PREFIX, "7. assignments.started_at 업데이트 성공");
     }
-    console.log(LOG_PREFIX, "7. assignments.started_at 업데이트 성공");
   } else {
-    console.log(LOG_PREFIX, "6. 이미 최초 시청 기록됨, watch_starts만 누적");
+    console.log(LOG_PREFIX, "6. 이미 최초 시청 기록됨 또는 started_at 미지원, watch_starts만 누적");
   }
 
-  // 매 시청 시작마다 watch_starts에 1건씩 누적 (4시, 6시 들어올 때마다 목록에 추가)
+  // 매 시청 시작마다 watch_starts에 1건씩 누적 (테이블이 있으면 기록, 없어도 200 반환)
   if (supabaseServiceKey) {
     const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
     const { error: insertErr } = await serviceSupabase

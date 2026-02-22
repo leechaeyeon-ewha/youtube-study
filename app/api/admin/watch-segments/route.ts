@@ -60,6 +60,10 @@ export async function GET(req: Request) {
     .order("start_sec", { ascending: true });
 
   if (error) {
+    const msg = error.message ?? "";
+    if (msg.includes("could not find the table") || msg.includes("watch_segments") || msg.includes("does not exist")) {
+      return NextResponse.json([]);
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

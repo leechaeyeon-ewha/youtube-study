@@ -1025,7 +1025,7 @@ export default function AdminAssignPage() {
                           </span>
                         ) : watchStarts.length === 0 ? (
                           <span className="text-sm text-slate-500 dark:text-slate-400" title="API는 성공했으나 목록이 비어 있음">
-                            학습 시작 기록이 없습니다. (DB에 기록된 시청 시작 이력 없음)
+                            학습 시작 기록이 없습니다. (DB에 기록된 시청 시작 이력 없음. 테이블이 없으면 Supabase SQL Editor에서 migration_watch_starts.sql 실행)
                           </span>
                         ) : (
                           <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
@@ -1063,7 +1063,7 @@ export default function AdminAssignPage() {
                             </span>
                           ) : watchSegments.length === 0 ? (
                             <span className="text-sm text-slate-500 dark:text-slate-400">
-                              시청 구간 기록이 없습니다. (스킵 허용 상태에서 재생한 구간만 저장됩니다)
+                              시청 구간 기록이 없습니다. (스킵 허용 상태에서 재생한 구간만 저장. 테이블이 없으면 migration_watch_segments.sql 실행)
                             </span>
                           ) : (
                             <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800">
