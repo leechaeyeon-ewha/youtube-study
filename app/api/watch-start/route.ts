@@ -50,7 +50,8 @@ export async function POST(req: Request) {
   }
   console.log(LOG_PREFIX, "4. assignmentId:", assignmentId);
 
-  let assignment: { id: string; user_id: string; started_at?: string | null } | null = null;
+  type AssignmentRow = { id: string; user_id: string; started_at?: string | null };
+  let assignment: AssignmentRow | null = null;
   let fetchErr: { message?: string; code?: string } | null = null;
 
   const { data: firstRow, error: firstErr } = await supabase
@@ -67,10 +68,10 @@ export async function POST(req: Request) {
       .eq("id", assignmentId as string)
       .eq("user_id", user.id)
       .single();
-    assignment = fallbackRow as typeof assignment;
+    assignment = fallbackRow as AssignmentRow;
     fetchErr = fallbackErr;
   } else {
-    assignment = firstRow as typeof assignment;
+    assignment = firstRow as AssignmentRow;
     fetchErr = firstErr;
   }
 
@@ -78,10 +79,11 @@ export async function POST(req: Request) {
     console.error(LOG_PREFIX, "5. assignments 행 조회 실패:", fetchErr?.message ?? "no data", "code:", fetchErr?.code);
     return NextResponse.json({ error: "해당 과제를 찾을 수 없습니다." }, { status: 403 });
   }
-  console.log(LOG_PREFIX, "5. assignment 행 존재함, started_at 현재값:", assignment.started_at ?? "null");
+  const startedAtValue = assignment.started_at ?? "null";
+  console.log(LOG_PREFIX, "5. assignment 행 존재함, started_at 현재값:", startedAtValue);
 
   const now = new Date().toISOString();
-  const hasStartedAtColumn = "started_at" in assignment;
+  const hasStartedAtColumn = "started_at" in assignment && assignment.started_at !== undefined;
   const isFirstTime = hasStartedAtColumn && (assignment.started_at == null || assignment.started_at === "");
 
   if (isFirstTime) {
