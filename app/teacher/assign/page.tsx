@@ -53,7 +53,7 @@ export default function TeacherAssignPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
-  const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete">>({});
+  const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete" | "priority">>({});
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
@@ -207,6 +207,25 @@ export default function TeacherAssignPage() {
       });
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    await load();
+  }
+
+  /** 이 학생의 배정 전체 해제 (재생목록 목록 화면용) */
+  async function handleUnassignAllForStudent(userId: string) {
+    const list = assignments.filter((a) => a.user_id === userId);
+    if (list.length === 0) return;
+    if (!confirm(`이 학생의 배정 ${list.length}개를 모두 해제할까요?`)) return;
+    const { data: { session } } = await supabase!.auth.getSession();
+    if (!session?.access_token) return;
+    const ids = list.map((a) => a.id);
+    for (const id of ids) {
+      await fetch(`/api/teacher/assignments/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+    }
+    setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
     await load();
   }
 
@@ -365,9 +384,12 @@ export default function TeacherAssignPage() {
                                 ? list.filter((a) => a.is_completed)
                                 : filter === "incomplete"
                                   ? list.filter((a) => !a.is_completed)
-                                  : list;
+                                  : filter === "priority"
+                                    ? list.filter((a) => a.is_priority)
+                                    : list;
                             const completedCount = list.filter((a) => a.is_completed).length;
                             const incompleteCount = list.length - completedCount;
+                            const priorityCount = list.filter((a) => a.is_priority).length;
                             const NONE_KEY = "__none__";
                             const groups = (() => {
                               const map = new Map<string, { courseTitle: string; assignments: AssignmentRow[] }>();
@@ -428,6 +450,17 @@ export default function TeacherAssignPage() {
                                 >
                                   미완료 ({incompleteCount})
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "priority" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "priority"
+                                      ? "bg-violet-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  우선 학습 ({priorityCount})
+                                </button>
                               </div>
                             );
 
@@ -440,7 +473,9 @@ export default function TeacherAssignPage() {
                                       ? "배정된 영상이 없습니다."
                                       : filter === "completed"
                                         ? "완료된 영상이 없습니다."
-                                        : "미완료 영상이 없습니다."}
+                                        : filter === "incomplete"
+                                          ? "미완료 영상이 없습니다."
+                                          : "우선 학습으로 지정된 영상이 없습니다."}
                                   </p>
                                 </div>
                               );
@@ -449,7 +484,16 @@ export default function TeacherAssignPage() {
                             if (showPlaylistList) {
                               return (
                                 <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
-                                  {progressFilterButtons}
+                                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                    {progressFilterButtons}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnassignAllForStudent(userId)}
+                                      className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                                    >
+                                      한 번에 배정 해제 ({list.length}개)
+                                    </button>
+                                  </div>
                                   <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                                     재생목록을 선택하면 해당 목록에 포함된 배정 영상들을 볼 수 있습니다. (재생목록에 속하지 않은 개별 영상은 &quot;기타 동영상&quot;에 모입니다.)
                                   </p>

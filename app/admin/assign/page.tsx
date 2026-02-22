@@ -68,8 +68,8 @@ export default function AdminAssignPage() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
-  /** 학생별 진도 필터: 전체 | 완료 | 미완료 */
-  const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete">>({});
+  /** 학생별 진도/우선 필터: 전체 | 완료 | 미완료 | 우선 학습 */
+  const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete" | "priority">>({});
   /** 학생별 배정 영상에서 펼친 재생목록: studentId -> courseKey (null이면 재생목록 목록 보기) */
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
   /** 학생 요약 정보 (이름/이메일) — /api/admin/students 기반 */
@@ -306,6 +306,43 @@ export default function AdminAssignPage() {
     await load();
   }
 
+  /** 이 학생의 배정 전체 해제 (재생목록 목록 화면용) */
+  async function handleUnassignAllForStudent(userId: string) {
+    if (!supabase) return;
+    const list = assignments.filter((a) => a.user_id === userId);
+    if (list.length === 0) return;
+    if (!confirm(`이 학생의 배정 ${list.length}개를 모두 해제할까요?`)) return;
+    const ids = list.map((a) => a.id);
+    await supabase.from("assignments").delete().in("id", ids);
+    setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
+    assignPageCache = null;
+    revalidateStudentPaths(ids);
+    await load();
+  }
+
+  /** 현재 재생목록의 배정 전체 해제 (재생목록 안 화면용) */
+  async function handleUnassignAllInPlaylist(userId: string, assignmentIds: string[]) {
+    if (!supabase) return;
+    if (assignmentIds.length === 0) return;
+    if (!confirm(`이 재생목록의 배정 ${assignmentIds.length}개를 모두 해제할까요?`)) return;
+    await supabase.from("assignments").delete().in("id", assignmentIds);
+    setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    assignPageCache = null;
+    revalidateStudentPaths(assignmentIds);
+    await load();
+  }
+
+  /** 현재 화면의 배정 전체 선택 / 전체 해제 토글 */
+  function toggleSelectAllInPlaylist(userId: string, assignmentIds: string[]) {
+    const current = selectedByStudent[userId] ?? [];
+    const allSelected = assignmentIds.length > 0 && assignmentIds.every((id) => current.includes(id));
+    setSelectedByStudent((prev) => ({
+      ...prev,
+      [userId]: allSelected ? [] : [...assignmentIds],
+    }));
+  }
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -519,9 +556,12 @@ export default function AdminAssignPage() {
                             ? list.filter((a) => a.is_completed)
                             : filter === "incomplete"
                               ? list.filter((a) => !a.is_completed)
-                              : list;
+                              : filter === "priority"
+                                ? list.filter((a) => a.is_priority)
+                                : list;
                         const completedCount = list.filter((a) => a.is_completed).length;
                         const incompleteCount = list.length - completedCount;
+                        const priorityCount = list.filter((a) => a.is_priority).length;
                         const NONE_KEY = "__none__";
                         const groups = (() => {
                           const map = new Map<string, { courseTitle: string; assignments: AssignmentRow[] }>();
@@ -547,12 +587,63 @@ export default function AdminAssignPage() {
 
                         if (filteredList.length === 0) {
                           return (
-                            <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 dark:border-zinc-700 dark:bg-zinc-800/30 dark:text-slate-400">
-                              {filter === "all"
-                                ? "배정된 영상이 없습니다."
-                                : filter === "completed"
-                                  ? "완료된 영상이 없습니다."
-                                  : "미완료 영상이 없습니다."}
+                            <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-4 dark:border-zinc-700 dark:bg-zinc-800/30">
+                              <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "all" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "all"
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  전체 ({list.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "completed" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "completed"
+                                      ? "bg-green-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  완료 ({completedCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "incomplete" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "incomplete"
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  미완료 ({incompleteCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "priority" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "priority"
+                                      ? "bg-violet-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  우선 학습 ({priorityCount})
+                                </button>
+                              </div>
+                              <p className="text-center text-sm text-slate-500 dark:text-slate-400">
+                                {filter === "all"
+                                  ? "배정된 영상이 없습니다."
+                                  : filter === "completed"
+                                    ? "완료된 영상이 없습니다."
+                                    : filter === "incomplete"
+                                      ? "미완료 영상이 없습니다."
+                                      : "우선 학습으로 지정된 영상이 없습니다."}
+                              </p>
                             </div>
                           );
                         }
@@ -596,7 +687,25 @@ export default function AdminAssignPage() {
                                   >
                                     미완료 ({incompleteCount})
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "priority" }))}
+                                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                      filter === "priority"
+                                        ? "bg-violet-600 text-white"
+                                        : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                    }`}
+                                  >
+                                    우선 학습 ({priorityCount})
+                                  </button>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUnassignAllForStudent(userId)}
+                                  className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                                >
+                                  한 번에 배정 해제 ({list.length}개)
+                                </button>
                               </div>
                               <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                                 재생목록을 선택하면 해당 목록에 포함된 배정 영상들을 볼 수 있습니다. (재생목록에 속하지 않은 개별 영상은 &quot;기타 동영상&quot;에 모입니다.)
@@ -624,24 +733,91 @@ export default function AdminAssignPage() {
                         const current = groups.find((g) => g.courseKey === selectedKey);
                         const showList = current?.assignments ?? [];
 
+                        const showListIds = showList.map((a) => a.id);
+                        const selectedIds = selectedByStudent[userId] ?? [];
+                        const allSelected = showListIds.length > 0 && showListIds.every((id) => selectedIds.includes(id));
+
                         return (
                           <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
-                            <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-zinc-700">
-                              <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
-                              <button
-                                type="button"
-                                onClick={() => setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }))}
-                                className="ml-auto text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                              >
-                                ← 재생목록 목록으로
-                              </button>
+                            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-200 dark:border-zinc-700">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">진도별 보기:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "all" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "all"
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  전체 ({list.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "completed" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "completed"
+                                      ? "bg-green-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  완료 ({completedCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "incomplete" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "incomplete"
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  미완료 ({incompleteCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgressFilterByStudent((prev) => ({ ...prev, [userId]: "priority" }))}
+                                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                                    filter === "priority"
+                                      ? "bg-violet-600 text-white"
+                                      : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                                  }`}
+                                >
+                                  우선 학습 ({priorityCount})
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={showList.length === 0}
+                                  onClick={() => handleUnassignAllInPlaylist(userId, showListIds)}
+                                  className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                                >
+                                  이 재생목록 전체 배정 해제 ({showList.length}개)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }))}
+                                  className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                                >
+                                  ← 재생목록 목록으로
+                                </button>
+                              </div>
                             </div>
                             <div className="overflow-x-auto">
                               <table className="w-full text-left text-sm">
                                 <thead>
                                   <tr className="border-b border-slate-200 dark:border-zinc-700">
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">
-                                      <span className="sr-only">선택</span>
+                                      <button
+                                        type="button"
+                                        disabled={showListIds.length === 0}
+                                        onClick={() => toggleSelectAllInPlaylist(userId, showListIds)}
+                                        className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-zinc-600 dark:text-slate-200 dark:hover:bg-zinc-700"
+                                      >
+                                        {allSelected ? "전체 해제" : "전체 선택"}
+                                      </button>
                                     </th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
                                     <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
@@ -663,7 +839,6 @@ export default function AdminAssignPage() {
                                   ) : (
                                     showList.map((a) => {
                                       const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                                      const selectedIds = selectedByStudent[userId] ?? [];
                                       const checked = selectedIds.includes(a.id);
                                       return (
                                         <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
@@ -769,21 +944,17 @@ export default function AdminAssignPage() {
                                 </tbody>
                               </table>
                             </div>
-                            {(() => {
-                              const selectedIds = selectedByStudent[userId] ?? [];
-                              if (selectedIds.length === 0) return null;
-                              return (
-                                <div className="flex justify-end px-4 py-3 border-t border-slate-200 dark:border-zinc-700">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleBulkUnassign(userId)}
-                                    className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                                  >
-                                    선택한 {selectedIds.length}개 배정 해제
-                                  </button>
-                                </div>
-                              );
-                            })()}
+                            {selectedIds.length > 0 && (
+                              <div className="flex justify-end px-4 py-3 border-t border-slate-200 dark:border-zinc-700">
+                                <button
+                                  type="button"
+                                  onClick={() => handleBulkUnassign(userId)}
+                                  className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                                >
+                                  선택한 {selectedIds.length}개 배정 해제
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })()}

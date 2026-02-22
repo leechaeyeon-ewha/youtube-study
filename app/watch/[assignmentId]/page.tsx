@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { ASSIGNMENT_SELECT_WATCH } from "@/lib/assignments";
+import { ASSIGNMENT_SELECT_WATCH, ASSIGNMENT_SELECT_WATCH_FALLBACK } from "@/lib/assignments";
 import YoutubePlayer from "@/components/YoutubePlayer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -146,7 +146,9 @@ export default function WatchPage() {
         return;
       }
 
-      const { data, error: fetchError } = await supabase
+      let data: unknown = null;
+      let fetchError: { message?: string } | null = null;
+      const { data: firstData, error: firstError } = await supabase
         .from("assignments")
         .select(ASSIGNMENT_SELECT_WATCH)
         .eq("id", id)
@@ -154,6 +156,21 @@ export default function WatchPage() {
         .single();
 
       if (cancelled) return;
+      if (firstError && (firstError.message?.includes("watched_seconds") || firstError.message?.includes("does not exist"))) {
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from("assignments")
+          .select(ASSIGNMENT_SELECT_WATCH_FALLBACK)
+          .eq("id", id)
+          .eq("user_id", user.id)
+          .single();
+        if (cancelled) return;
+        data = fallbackData;
+        fetchError = fallbackError;
+      } else {
+        data = firstData;
+        fetchError = firstError;
+      }
+
       if (fetchError || !data) {
         setError(fetchError?.message ?? "과제를 찾을 수 없습니다.");
         setLoading(false);

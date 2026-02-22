@@ -90,11 +90,22 @@ export async function POST(req: Request) {
     updatePayload.watched_seconds = Number(watchedSeconds);
   }
 
-  const { error: updateErr } = await supabase
+  let { error: updateErr } = await supabase
     .from("assignments")
     .update(updatePayload)
     .eq("id", assignmentId as string)
     .eq("user_id", user.id);
+
+  if (updateErr && updatePayload.watched_seconds !== undefined && (updateErr.message?.includes("watched_seconds") || updateErr.message?.includes("does not exist"))) {
+    const payloadWithoutWatched = { ...updatePayload };
+    delete payloadWithoutWatched.watched_seconds;
+    const { error: retryErr } = await supabase
+      .from("assignments")
+      .update(payloadWithoutWatched)
+      .eq("id", assignmentId as string)
+      .eq("user_id", user.id);
+    updateErr = retryErr;
+  }
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });

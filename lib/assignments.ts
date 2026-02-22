@@ -12,6 +12,10 @@ export const ASSIGNMENT_SELECT_ADMIN =
 export const ASSIGNMENT_SELECT_STUDENT_LIST =
   "id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, videos(id, title, video_id, course_id, courses(id, title))";
 
-/** 시청 페이지 단일 배정: 진도 저장·플레이어용 (last_position, prevent_skip, watched_seconds 포함) */
+/** 시청 페이지 단일 배정: 진도 저장·플레이어용 (last_position, prevent_skip, watched_seconds 포함). watched_seconds 컬럼이 없으면 조회 실패 → 시청 페이지에서 FALLBACK 사용 */
 export const ASSIGNMENT_SELECT_WATCH =
   "id, is_completed, progress_percent, last_position, prevent_skip, watched_seconds, videos(id, title, video_id)";
+
+/** watched_seconds 컬럼이 없을 때 시청 페이지 조회용 (마이그레이션 미적용 DB 호환) */
+export const ASSIGNMENT_SELECT_WATCH_FALLBACK =
+  "id, is_completed, progress_percent, last_position, prevent_skip, videos(id, title, video_id)";
