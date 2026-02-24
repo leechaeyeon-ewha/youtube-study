@@ -851,7 +851,33 @@ export default function AdminAssignPage() {
                                             />
                                           </td>
                                           <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
-                                            {video?.title ?? "-"}
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              {video?.video_id ? (
+                                                <>
+                                                  <a
+                                                    href={`https://www.youtube.com/watch?v=${video.video_id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-indigo-600 hover:underline dark:text-indigo-400"
+                                                  >
+                                                    {video?.title ?? "-"}
+                                                  </a>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const url = `https://www.youtube.com/watch?v=${video.video_id}`;
+                                                      void navigator.clipboard.writeText(url);
+                                                    }}
+                                                    className="rounded border border-slate-300 px-1.5 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-zinc-600 dark:text-slate-400 dark:hover:bg-zinc-700"
+                                                    title="영상 링크 복사"
+                                                  >
+                                                    링크 복사
+                                                  </button>
+                                                </>
+                                              ) : (
+                                                <span>{video?.title ?? "-"}</span>
+                                              )}
+                                            </div>
                                           </td>
                                           <td className="px-4 py-2.5">
                                             <span className={a.is_completed ? "font-medium text-green-600 dark:text-green-400" : "text-slate-600 dark:text-slate-400"}>
