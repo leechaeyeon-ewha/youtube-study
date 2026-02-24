@@ -376,9 +376,14 @@ export default function TeacherVideosPage() {
                       <ul className="space-y-1 border-t border-slate-100 bg-slate-50/50 px-6 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
                         {g.videos.map((v) => (
                           <li key={v.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
-                            <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-slate-100">
+                            <a
+                              href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="min-w-0 flex-1 truncate text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+                            >
                               {v.title || v.video_id}
-                            </span>
+                            </a>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -409,7 +414,14 @@ export default function TeacherVideosPage() {
             ) : (
               filteredStandaloneVideos.map((v) => (
                 <li key={v.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-                  <span className="font-medium text-slate-900 dark:text-white">{v.title || v.video_id}</span>
+                  <a
+                    href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                  >
+                    {v.title || v.video_id}
+                  </a>
                   <button
                     type="button"
                     onClick={() => {

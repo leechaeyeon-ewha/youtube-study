@@ -958,7 +958,14 @@ export default function AdminVideosPage() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
-                                {v.title}
+                                <a
+                                  href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-indigo-600 hover:underline dark:text-indigo-400"
+                                >
+                                  {v.title}
+                                </a>
                               </p>
                               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                                 {v.video_id}
@@ -1037,7 +1044,14 @@ export default function AdminVideosPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
-                        {v.title}
+                        <a
+                          href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          {v.title}
+                        </a>
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {v.video_id}
