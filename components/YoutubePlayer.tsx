@@ -414,6 +414,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
           if (jumpForward && aheadOfMax) {
             p.seekTo(maxWatchedRef.current, true);
             lastCurrentRef.current = maxWatchedRef.current;
+            p.pauseVideo();
             const now = Date.now();
             if (now - skipAlertCooldownRef.current > 2000) {
               skipAlertCooldownRef.current = now;
