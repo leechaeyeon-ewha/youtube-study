@@ -115,6 +115,8 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
   const totalWatchedSecondsRef = useRef(initialWatchedSeconds);
   /** 스킵 허용 시: 마지막으로 저장한 시점의 영상 위치(초). 시청 구간 전송용 */
   const lastSaveVideoPositionRef = useRef(initialPosition);
+  /** 페이지 이탈 시 진도 저장용 (keepalive fetch에서 사용) */
+  const lastAuthTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
@@ -148,6 +150,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) return;
+        lastAuthTokenRef.current = session.access_token;
         await fetch("/api/progress", {
           method: "POST",
           headers: {
@@ -325,6 +328,51 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, []);
 
+  /** 탭 닫기/이동 시 현재 재생 위치 저장 → 다음에 유튜브처럼 마지막 시청 위치부터 재생 */
+  useEffect(() => {
+    if (typeof window === "undefined" || !assignmentId) return;
+    const flushProgress = (keepalive: boolean) => {
+      const token = lastAuthTokenRef.current;
+      const p = playerRef.current;
+      if (!token || !p) return;
+      try {
+        const duration = p.getDuration();
+        if (!Number.isFinite(duration) || duration <= 0) return;
+        const lastPos = preventSkip ? maxWatchedRef.current : p.getCurrentTime();
+        const watchedSec = preventSkip ? maxWatchedRef.current : totalWatchedSecondsRef.current;
+        const percent = preventSkip
+          ? (maxWatchedRef.current / duration) * 100
+          : (totalWatchedSecondsRef.current / duration) * 100;
+        const progressPercent = Math.min(100, Math.max(0, Math.round(percent * 100) / 100));
+        fetch("/api/progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            assignmentId,
+            progress_percent: progressPercent,
+            is_completed: progressPercent >= COMPLETE_THRESHOLD * 100,
+            last_position: lastPos,
+            last_watched_at: new Date().toISOString(),
+            watched_seconds: watchedSec,
+          }),
+          keepalive,
+        });
+      } catch {
+        // ignore
+      }
+    };
+    const onBeforeUnload = () => flushProgress(true);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushProgress(false);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [assignmentId, preventSkip]);
+
   useEffect(() => {
     if (!ready || !assignmentId) return;
 
@@ -360,6 +408,7 @@ export default function YoutubePlayer({ videoId, assignmentId, initialPosition =
         }
 
         if (preventSkip) {
+          // 앞으로 건너뛰기만 막음. 이미 시청한 구간으로 뒤로 이동(다시 보기)은 허용됨.
           const jumpForward = current - prevCurrent > 1.5;
           const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
           if (jumpForward && aheadOfMax) {

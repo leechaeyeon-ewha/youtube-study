@@ -62,10 +62,12 @@ export default function AdminVideosPage() {
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [assignPriority, setAssignPriority] = useState(false);
+  const [assignStudentSearch, setAssignStudentSearch] = useState("");
 
   const [settingsTarget, setSettingsTarget] = useState<"all" | "class" | "student">("all");
   const [settingsClassId, setSettingsClassId] = useState("");
   const [settingsStudentIds, setSettingsStudentIds] = useState<string[]>([]);
+  const [settingsStudentSearch, setSettingsStudentSearch] = useState("");
   const [settingsVisible, setSettingsVisible] = useState<boolean | null>(null);
   const [settingsWeekly, setSettingsWeekly] = useState<boolean | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -606,6 +608,7 @@ export default function AdminVideosPage() {
       }
       setAssignClassId("");
       setAssignStudentIds([]);
+      setAssignStudentSearch("");
       setAssignPriority(false);
       loadVideos();
     } catch (err: unknown) {
@@ -973,6 +976,17 @@ export default function AdminVideosPage() {
                             </div>
                             <button
                               type="button"
+                              onClick={() => {
+                                setSelectedVideoIds([v.id]);
+                                setAssignMessage(null);
+                                setAssignModalOpen(true);
+                              }}
+                              className="shrink-0 rounded-lg bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+                            >
+                              배정
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => openVideoDetailModal(v.id, v.title)}
                               className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
                             >
@@ -1057,6 +1071,17 @@ export default function AdminVideosPage() {
                         {v.video_id}
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedVideoIds([v.id]);
+                        setAssignMessage(null);
+                        setAssignModalOpen(true);
+                      }}
+                      className="shrink-0 rounded-lg bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+                    >
+                      배정
+                    </button>
                     <button
                       type="button"
                       onClick={() => openVideoDetailModal(v.id, v.title)}
@@ -1195,13 +1220,31 @@ export default function AdminVideosPage() {
               </div>
             )}
             {assignTarget === "student" && (
-              <div className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
-                {students.map((s) => (
-                  <label key={s.id} className="flex cursor-pointer items-center gap-2 py-1">
-                    <input type="checkbox" checked={assignStudentIds.includes(s.id)} onChange={() => setAssignStudentIds((prev) => prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id])} className="rounded text-indigo-600" />
-                    <span className="text-sm">{s.full_name ?? s.email ?? s.id}</span>
-                  </label>
-                ))}
+              <div className="mb-4">
+                <input
+                  type="text"
+                  value={assignStudentSearch}
+                  onChange={(e) => setAssignStudentSearch(e.target.value)}
+                  placeholder="학생 이름으로 검색..."
+                  className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-zinc-500"
+                />
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
+                  {(() => {
+                    const q = assignStudentSearch.trim().toLowerCase();
+                    const list = q ? students.filter((s) => (s.full_name ?? "").toLowerCase().includes(q)) : students;
+                    return list.length === 0 ? (
+                      <p className="py-2 text-center text-sm text-slate-500 dark:text-zinc-400">{q ? "검색 결과가 없습니다." : "학생이 없습니다."}</p>
+                    ) : (
+                      list.map((s) => (
+                        <label key={s.id} className="flex cursor-pointer items-center gap-2 py-1">
+                          <input type="checkbox" checked={assignStudentIds.includes(s.id)} onChange={() => setAssignStudentIds((prev) => prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id])} className="rounded text-indigo-600" />
+                          <span className="text-sm">{s.full_name ?? s.email ?? s.id}</span>
+                        </label>
+                      ))
+                    );
+                  })()}
+                </div>
+                {assignStudentIds.length > 0 && <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">선택한 학생: {assignStudentIds.length}명</p>}
               </div>
             )}
             {assignMessage && <p className={`mb-4 text-sm ${assignMessage.type === "error" ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{assignMessage.text}</p>}
@@ -1248,13 +1291,31 @@ export default function AdminVideosPage() {
               </div>
             )}
             {settingsTarget === "student" && (
-              <div className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
-                {students.map((s) => (
-                  <label key={s.id} className="flex cursor-pointer items-center gap-2 py-1">
-                    <input type="checkbox" checked={settingsStudentIds.includes(s.id)} onChange={() => setSettingsStudentIds((prev) => prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id])} className="rounded text-indigo-600" />
-                    <span className="text-sm">{s.full_name ?? s.email ?? s.id}</span>
-                  </label>
-                ))}
+              <div className="mb-4">
+                <input
+                  type="text"
+                  value={settingsStudentSearch}
+                  onChange={(e) => setSettingsStudentSearch(e.target.value)}
+                  placeholder="학생 이름으로 검색..."
+                  className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-zinc-500"
+                />
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-700">
+                  {(() => {
+                    const q = settingsStudentSearch.trim().toLowerCase();
+                    const list = q ? students.filter((s) => (s.full_name ?? "").toLowerCase().includes(q)) : students;
+                    return list.length === 0 ? (
+                      <p className="py-2 text-center text-sm text-slate-500 dark:text-zinc-400">{q ? "검색 결과가 없습니다." : "학생이 없습니다."}</p>
+                    ) : (
+                      list.map((s) => (
+                        <label key={s.id} className="flex cursor-pointer items-center gap-2 py-1">
+                          <input type="checkbox" checked={settingsStudentIds.includes(s.id)} onChange={() => setSettingsStudentIds((prev) => prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id])} className="rounded text-indigo-600" />
+                          <span className="text-sm">{s.full_name ?? s.email ?? s.id}</span>
+                        </label>
+                      ))
+                    );
+                  })()}
+                </div>
+                {settingsStudentIds.length > 0 && <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">선택한 학생: {settingsStudentIds.length}명</p>}
               </div>
             )}
             <div className="mb-4">
