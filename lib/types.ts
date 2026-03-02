@@ -38,6 +38,8 @@ export interface Video {
   course_id?: string | null;
   is_visible?: boolean;
   is_weekly_assignment?: boolean;
+  /** 영상 자체의 기본 스킵 방지 설정 (없으면 true 취급) */
+  prevent_skip_default?: boolean;
   created_at?: string;
 }
 

@@ -9,8 +9,6 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 interface VideoWithCourse extends Video {
   sort_order?: number;
   courses: { id: string; title: string; sort_order?: number } | null;
-  is_visible?: boolean;
-  is_weekly_assignment?: boolean;
 }
 
 interface CourseGroup {
@@ -83,6 +81,7 @@ export default function AdminVideosPage() {
   const [videoDetailModal, setVideoDetailModal] = useState<{ id: string; title: string } | null>(null);
   const [assignmentDetailList, setAssignmentDetailList] = useState<{ user_id: string; full_name: string | null; email: string | null; progress_percent: number; last_watched_at: string | null }[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [preventSkipToggleVideoId, setPreventSkipToggleVideoId] = useState<string | null>(null);
 
   function buildCourseGroupsFromVideos(list: VideoWithCourse[]): CourseGroup[] {
     const normalized = list.map((row) => ({
@@ -128,7 +127,7 @@ export default function AdminVideosPage() {
     let error: { message: string } | null = null;
     const res = await supabase
       .from("videos")
-      .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, sort_order, created_at, courses(id, title, sort_order)")
+      .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, prevent_skip_default, sort_order, created_at, courses(id, title, sort_order)")
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
     data = res.data as VideoWithCourse[] | null;
@@ -136,7 +135,7 @@ export default function AdminVideosPage() {
     if (error && data == null) {
       const fallback = await supabase
         .from("videos")
-        .select("id, title, video_id, course_id, created_at, courses(id, title)")
+        .select("id, title, video_id, course_id, prevent_skip_default, created_at, courses(id, title)")
         .order("created_at", { ascending: false });
       if (!fallback.error && fallback.data) {
         data = fallback.data as VideoWithCourse[];
@@ -672,6 +671,26 @@ export default function AdminVideosPage() {
     }
   }
 
+  async function handleToggleVideoPreventSkip(videoId: string, current: boolean | null | undefined) {
+    if (!supabase) return;
+    const next = !(current ?? true);
+    setPreventSkipToggleVideoId(videoId);
+    try {
+      const { error } = await supabase
+        .from("videos")
+        .update({ prevent_skip_default: next })
+        .eq("id", videoId);
+      if (error) throw error;
+      videosPageCache = null;
+      await loadVideos();
+    } catch (err) {
+      console.error(err);
+      setBulkMessage({ type: "error", text: "스킵 방지 기본값 변경에 실패했습니다." });
+    } finally {
+      setPreventSkipToggleVideoId(null);
+    }
+  }
+
   return (
     <div>
       <h1 className="mb-2 text-2xl font-bold text-slate-900 dark:text-white">영상 관리</h1>
@@ -990,6 +1009,22 @@ export default function AdminVideosPage() {
                             </button>
                             <button
                               type="button"
+                              onClick={() => handleToggleVideoPreventSkip(v.id, v.prevent_skip_default)}
+                              disabled={preventSkipToggleVideoId === v.id}
+                              className={`shrink-0 rounded-lg px-2 py-1 text-xs font-medium ${
+                                (v.prevent_skip_default ?? true)
+                                  ? "bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:hover:bg-sky-900/50"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-zinc-800 dark:text-slate-300 dark:hover:bg-zinc-700"
+                              }`}
+                            >
+                              {preventSkipToggleVideoId === v.id
+                                ? "변경 중..."
+                                : (v.prevent_skip_default ?? true)
+                                  ? "스킵 방지 ON"
+                                  : "스킵 방지 OFF"}
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => openVideoDetailModal(v.id, v.title)}
                               className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
                             >
@@ -1084,6 +1119,22 @@ export default function AdminVideosPage() {
                       className="shrink-0 rounded-lg bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
                     >
                       배정
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleVideoPreventSkip(v.id, v.prevent_skip_default)}
+                      disabled={preventSkipToggleVideoId === v.id}
+                      className={`shrink-0 rounded-lg px-2 py-1 text-xs font-medium ${
+                        (v.prevent_skip_default ?? true)
+                          ? "bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:hover:bg-sky-900/50"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-zinc-800 dark:text-slate-300 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      {preventSkipToggleVideoId === v.id
+                        ? "변경 중..."
+                        : (v.prevent_skip_default ?? true)
+                          ? "스킵 방지 ON"
+                          : "스킵 방지 OFF"}
                     </button>
                     <button
                       type="button"
