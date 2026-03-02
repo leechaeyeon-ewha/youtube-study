@@ -684,6 +684,11 @@ export default function AdminVideosPage() {
         .update({ prevent_skip_default: next })
         .eq("id", videoId);
       if (error) throw error;
+      // 이미 배정된 학생들의 스킵 방지 설정도 함께 반영
+      await supabase
+        .from("assignments")
+        .update({ prevent_skip: next })
+        .eq("video_id", videoId);
       videosPageCache = null;
       await loadVideos();
     } catch (err) {
@@ -710,6 +715,7 @@ export default function AdminVideosPage() {
     const key = courseKey ?? "__none__";
     setPreventSkipToggleCourseKey(key);
     try {
+      const videoIds = videos.map((v) => v.id);
       let query = supabase.from("videos").update({ prevent_skip_default: next });
       if (courseKey == null) {
         query = query.is("course_id", null);
@@ -718,6 +724,11 @@ export default function AdminVideosPage() {
       }
       const { error } = await query;
       if (error) throw error;
+      // 해당 재생목록의 모든 영상에 대한 기존 배정들의 스킵 방지 설정도 반영
+      await supabase
+        .from("assignments")
+        .update({ prevent_skip: next })
+        .in("video_id", videoIds);
       videosPageCache = null;
       await loadVideos();
     } catch (err) {
