@@ -133,9 +133,11 @@ export default function AdminVideosPage() {
     data = res.data as VideoWithCourse[] | null;
     error = res.error;
     if (error && data == null) {
+      // 컬럼이 없을 수도 있는 환경(예: prevent_skip_default 미적용)에서는
+      // 더 좁은 컬럼 집합으로 재조회해 목록이 사라지지 않도록 한다.
       const fallback = await supabase
         .from("videos")
-        .select("id, title, video_id, course_id, prevent_skip_default, created_at, courses(id, title)")
+        .select("id, title, video_id, course_id, created_at, courses(id, title)")
         .order("created_at", { ascending: false });
       if (!fallback.error && fallback.data) {
         data = fallback.data as VideoWithCourse[];
