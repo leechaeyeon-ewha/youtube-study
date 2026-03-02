@@ -47,6 +47,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "해당 학생에게 배정할 권한이 없습니다." }, { status: 403 });
   }
 
+  // 영상별 스킵 방지 기본값 조회 (없으면 true)
+  let preventSkip = true;
+  try {
+    const { data: videoRow, error: videoErr } = await supabase
+      .from("videos")
+      .select("prevent_skip_default")
+      .eq("id", videoId)
+      .single();
+    if (!videoErr && videoRow && typeof (videoRow as any).prevent_skip_default === "boolean") {
+      preventSkip = (videoRow as any).prevent_skip_default as boolean;
+    }
+  } catch {
+    // ignore
+  }
+
   const { data: inserted, error } = await supabase
     .from("assignments")
     .insert({
@@ -57,6 +72,7 @@ export async function POST(req: Request) {
       last_position: 0,
       is_visible: true,
       is_weekly_assignment: false,
+      prevent_skip: preventSkip,
     })
     .select("id")
     .single();

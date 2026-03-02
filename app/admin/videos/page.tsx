@@ -576,6 +576,21 @@ export default function AdminVideosPage() {
       let added = 0;
       const newIds: string[] = [];
       for (const videoId of selectedVideoIds) {
+        // 영상별 스킵 방지 기본값 조회 (없으면 true)
+        let preventSkip = true;
+        try {
+          const { data: videoRow, error: videoErr } = await supabase
+            .from("videos")
+            .select("prevent_skip_default")
+            .eq("id", videoId)
+            .single();
+          if (!videoErr && videoRow && typeof (videoRow as any).prevent_skip_default === "boolean") {
+            preventSkip = (videoRow as any).prevent_skip_default as boolean;
+          }
+        } catch {
+          // ignore
+        }
+
         for (const userId of userIds) {
           const { data: row, error } = await supabase
             .from("assignments")
@@ -588,6 +603,7 @@ export default function AdminVideosPage() {
               is_visible: true,
               is_weekly_assignment: false,
               is_priority: assignPriority,
+              prevent_skip: preventSkip,
             })
             .select("id")
             .single();
