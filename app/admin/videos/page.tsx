@@ -82,6 +82,7 @@ export default function AdminVideosPage() {
   const [assignmentDetailList, setAssignmentDetailList] = useState<{ user_id: string; full_name: string | null; email: string | null; progress_percent: number; last_watched_at: string | null }[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [preventSkipToggleVideoId, setPreventSkipToggleVideoId] = useState<string | null>(null);
+  const [preventSkipToggleCourseKey, setPreventSkipToggleCourseKey] = useState<string | null>(null);
 
   function buildCourseGroupsFromVideos(list: VideoWithCourse[]): CourseGroup[] {
     const normalized = list.map((row) => ({
@@ -693,6 +694,40 @@ export default function AdminVideosPage() {
     }
   }
 
+  function getCoursePreventSkipState(videos: VideoWithCourse[]): "on" | "off" | "mixed" {
+    if (videos.length === 0) return "off";
+    const allOn = videos.every((v) => (v.prevent_skip_default ?? true) === true);
+    const allOff = videos.every((v) => v.prevent_skip_default === false);
+    if (allOn) return "on";
+    if (allOff) return "off";
+    return "mixed";
+  }
+
+  async function handleToggleCoursePreventSkip(courseKey: string | null, videos: VideoWithCourse[]) {
+    if (!supabase || videos.length === 0) return;
+    const state = getCoursePreventSkipState(videos);
+    const next = state !== "on"; // 한 번이라도 OFF나 mixed이면 전체 ON, 전부 ON이면 전체 OFF
+    const key = courseKey ?? "__none__";
+    setPreventSkipToggleCourseKey(key);
+    try {
+      let query = supabase.from("videos").update({ prevent_skip_default: next });
+      if (courseKey == null) {
+        query = query.is("course_id", null);
+      } else {
+        query = query.eq("course_id", courseKey);
+      }
+      const { error } = await query;
+      if (error) throw error;
+      videosPageCache = null;
+      await loadVideos();
+    } catch (err) {
+      console.error(err);
+      setBulkMessage({ type: "error", text: "재생목록 스킵 방지 기본값 변경에 실패했습니다." });
+    } finally {
+      setPreventSkipToggleCourseKey(null);
+    }
+  }
+
   return (
     <div>
       <h1 className="mb-2 text-2xl font-bold text-slate-900 dark:text-white">영상 관리</h1>
@@ -877,6 +912,8 @@ export default function AdminVideosPage() {
                 ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
               const isExpanded = expandedCourseId === group.courseId;
               const courseBusy = group.courseId && reorderLoading === `course-${group.courseId}`;
+              const courseKey = group.courseId ?? "__none__";
+              const preventState = getCoursePreventSkipState(group.videos);
               return (
                 <div
                   key={group.courseId ?? "none"}
@@ -936,6 +973,28 @@ export default function AdminVideosPage() {
                         <span className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
                           {isExpanded ? "접기 ▲" : "영상 보기 ▼"}
                         </span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleCoursePreventSkip(group.courseId, group.videos)}
+                        disabled={preventSkipToggleCourseKey === courseKey || !!courseBusy}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+                          preventState === "on"
+                            ? "bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:hover:bg-sky-900/50"
+                            : preventState === "off"
+                              ? "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-zinc-800 dark:text-slate-300 dark:hover:bg-zinc-700"
+                              : "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                        }`}
+                      >
+                        {preventSkipToggleCourseKey === courseKey
+                          ? "변경 중..."
+                          : preventState === "on"
+                            ? "스킵 방지 전체 ON"
+                            : preventState === "off"
+                              ? "스킵 방지 전체 OFF"
+                              : "스킵 방지 혼합"}
                       </button>
                     </div>
                   </div>
