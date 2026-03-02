@@ -70,6 +70,7 @@ export default function AdminVideosPage() {
   const [settingsStudentSearch, setSettingsStudentSearch] = useState("");
   const [settingsVisible, setSettingsVisible] = useState<boolean | null>(null);
   const [settingsWeekly, setSettingsWeekly] = useState<boolean | null>(null);
+  const [settingsPreventSkip, setSettingsPreventSkip] = useState<boolean | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
@@ -620,8 +621,8 @@ export default function AdminVideosPage() {
 
   async function handleSettingsSubmit() {
     if (!supabase || selectedVideoIds.length === 0) return;
-    if (settingsVisible === null && settingsWeekly === null) {
-      setSettingsMessage({ type: "error", text: "노출 또는 주간 과제 중 하나 이상을 선택해 주세요." });
+    if (settingsVisible === null && settingsWeekly === null && settingsPreventSkip === null) {
+      setSettingsMessage({ type: "error", text: "노출, 주간 과제, 스킵 방지 중 하나 이상을 선택해 주세요." });
       return;
     }
     let userIds: string[] = [];
@@ -645,9 +646,10 @@ export default function AdminVideosPage() {
     setSettingsLoading(true);
     setSettingsMessage(null);
     try {
-      const updates: { is_visible?: boolean; is_weekly_assignment?: boolean } = {};
+      const updates: { is_visible?: boolean; is_weekly_assignment?: boolean; prevent_skip?: boolean } = {};
       if (settingsVisible !== null) updates.is_visible = settingsVisible;
       if (settingsWeekly !== null) updates.is_weekly_assignment = settingsWeekly;
+      if (settingsPreventSkip !== null) updates.prevent_skip = settingsPreventSkip;
       const { error } = await supabase
         .from("assignments")
         .update(updates)
@@ -658,6 +660,7 @@ export default function AdminVideosPage() {
       setSettingsModalOpen(false);
       setSettingsVisible(null);
       setSettingsWeekly(null);
+      setSettingsPreventSkip(null);
       setSettingsClassId("");
       setSettingsStudentIds([]);
       setSelectedVideoIds([]);
@@ -1348,6 +1351,24 @@ export default function AdminVideosPage() {
                 </label>
                 <label className="flex cursor-pointer items-center gap-2">
                   <input type="radio" name="weekly" checked={settingsWeekly === null} onChange={() => setSettingsWeekly(null)} className="text-indigo-600" />
+                  변경 안 함
+                </label>
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">스킵 방지</label>
+              <p className="mb-1 text-xs text-slate-500 dark:text-slate-400">설정한 영상(재생목록/단일 영상)의 배정에 대해, 스킵 방지 기능을 한 번에 켜거나 끌 수 있습니다.</p>
+              <div className="flex gap-4">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="radio" name="preventSkip" checked={settingsPreventSkip === true} onChange={() => setSettingsPreventSkip(true)} className="text-indigo-600" />
+                  켜기 (건너뛰기 방지)
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="radio" name="preventSkip" checked={settingsPreventSkip === false} onChange={() => setSettingsPreventSkip(false)} className="text-indigo-600" />
+                  끄기 (건너뛰기 허용)
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="radio" name="preventSkip" checked={settingsPreventSkip === null} onChange={() => setSettingsPreventSkip(null)} className="text-indigo-600" />
                   변경 안 함
                 </label>
               </div>
