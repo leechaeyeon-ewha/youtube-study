@@ -176,49 +176,44 @@ export default function StudentPlaylistPage() {
                 <li key={a.id}>
                   <Link
                     href={`/watch/${a.id}`}
-                    className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-indigo-200 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
+                    className="flex items-stretch gap-2 overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm transition hover:border-indigo-200 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800 sm:gap-3 sm:px-4 sm:py-3"
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-medium text-slate-600 dark:bg-zinc-700 dark:text-slate-300">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center self-center rounded-full bg-slate-100 text-xs font-medium text-slate-600 dark:bg-zinc-700 dark:text-slate-300">
                       {index + 1}
                     </span>
-                    <div className="relative h-14 w-[100px] shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-800">
+                    <div className="relative h-10 w-16 shrink-0 self-center overflow-hidden rounded-md bg-slate-200 dark:bg-zinc-800 sm:h-11 sm:w-[72px]">
                       <img
                         src={getThumbnailUrl(video.video_id)}
                         alt=""
                         className="h-full w-full object-cover"
                       />
-                      {a.is_completed && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/40">
-                          <span className="rounded-full bg-green-500 px-1.5 py-0.5 text-xs font-medium text-white">
-                            완료
-                          </span>
-                        </span>
-                      )}
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="font-medium text-slate-900 dark:text-white line-clamp-2">
+                    <div className="min-w-0 flex-1 self-center py-0.5">
+                      <h2 className="break-words font-medium text-slate-900 dark:text-white [overflow-wrap:anywhere]">
                         {video.title}
                       </h2>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
                         {a.is_weekly_assignment && (
                           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                             주간 과제
                           </span>
                         )}
-                        <span className="text-sm text-slate-500 dark:text-slate-400">
+                        <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">
                           {a.is_completed ? "시청 완료" : `진도 ${(a.progress_percent ?? 0).toFixed(0)}%`}
                         </span>
                       </div>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                        a.is_completed
-                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                      }`}
-                    >
-                      {a.is_completed ? "완료" : "미완료"}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end justify-center self-stretch pl-1">
+                      <span
+                        className={`whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-medium sm:px-2.5 sm:text-xs ${
+                          a.is_completed
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                        }`}
+                      >
+                        {a.is_completed ? "완료" : "미완료"}
+                      </span>
+                    </div>
                   </Link>
                 </li>
               );
