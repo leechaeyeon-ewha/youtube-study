@@ -81,6 +81,14 @@ export default function AdminVideosPage() {
   const [videoDetailModal, setVideoDetailModal] = useState<{ id: string; title: string } | null>(null);
   const [assignmentDetailList, setAssignmentDetailList] = useState<{ user_id: string; full_name: string | null; email: string | null; progress_percent: number; last_watched_at: string | null }[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [courseAssigneesModal, setCourseAssigneesModal] = useState<{ title: string } | null>(null);
+  const [courseAssigneeList, setCourseAssigneeList] = useState<{ user_id: string; full_name: string | null; email: string | null }[]>([]);
+  const [courseAssigneesLoading, setCourseAssigneesLoading] = useState(false);
+  const [addVideoToCourseModal, setAddVideoToCourseModal] = useState<{ courseId: string; courseTitle: string; videos: VideoWithCourse[] } | null>(null);
+  const [addVideoToCourseUrl, setAddVideoToCourseUrl] = useState("");
+  const [addVideoToCourseTitle, setAddVideoToCourseTitle] = useState("");
+  const [addVideoToCourseLoading, setAddVideoToCourseLoading] = useState(false);
+  const [addVideoToCourseMessage, setAddVideoToCourseMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [preventSkipToggleVideoId, setPreventSkipToggleVideoId] = useState<string | null>(null);
   const [preventSkipToggleCourseKey, setPreventSkipToggleCourseKey] = useState<string | null>(null);
 
@@ -323,6 +331,132 @@ export default function AdminVideosPage() {
       setAssignmentDetailList([]);
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function openCourseAssigneesModal(courseTitle: string, videoIds: string[]) {
+    setCourseAssigneesModal({ title: courseTitle });
+    setCourseAssigneeList([]);
+    setCourseAssigneesLoading(true);
+    try {
+      if (!supabase || videoIds.length === 0) {
+        setCourseAssigneeList([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("assignments")
+        .select("user_id, profiles(full_name, email)")
+        .in("video_id", videoIds);
+      if (error) throw error;
+      const byUser = new Map<string, { user_id: string; full_name: string | null; email: string | null }>();
+      for (const row of (data ?? []) as { user_id: string; profiles: { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null }[]) {
+        const p = Array.isArray(row.profiles) ? row.profiles[0] ?? null : row.profiles;
+        if (!byUser.has(row.user_id)) {
+          byUser.set(row.user_id, {
+            user_id: row.user_id,
+            full_name: p?.full_name ?? null,
+            email: p?.email ?? null,
+          });
+        }
+      }
+      const list = Array.from(byUser.values()).sort((a, b) =>
+        (a.full_name || a.email || a.user_id).localeCompare(b.full_name || b.email || b.user_id, "ko")
+      );
+      setCourseAssigneeList(list);
+    } catch (_err: unknown) {
+      setCourseAssigneeList([]);
+    } finally {
+      setCourseAssigneesLoading(false);
+    }
+  }
+
+  function openAddVideoToCourseModal(courseId: string, courseTitle: string, videos: VideoWithCourse[]) {
+    setAddVideoToCourseModal({ courseId, courseTitle, videos });
+    setAddVideoToCourseUrl("");
+    setAddVideoToCourseTitle("");
+    setAddVideoToCourseMessage(null);
+  }
+
+  async function handleAddVideoToCourse(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addVideoToCourseModal || !supabase) return;
+    setAddVideoToCourseMessage(null);
+    const { courseId, courseTitle, videos: courseVideos } = addVideoToCourseModal;
+    const videoId = extractYoutubeVideoId(addVideoToCourseUrl);
+    if (!videoId) {
+      setAddVideoToCourseMessage({ type: "error", text: "유효한 YouTube URL을 입력해 주세요." });
+      return;
+    }
+    if (courseVideos.some((v) => v.video_id === videoId)) {
+      setAddVideoToCourseMessage({ type: "error", text: "이미 이 재생목록에 포함된 영상입니다." });
+      return;
+    }
+    setAddVideoToCourseLoading(true);
+    try {
+      const maxSort = courseVideos.reduce((max, v) => Math.max(max, v.sort_order ?? 0), -1);
+      const nextSortOrder = maxSort + 1;
+
+      let title = addVideoToCourseTitle.trim();
+      if (!title) {
+        try {
+          const res = await fetch("/api/youtube-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: addVideoToCourseUrl }),
+          });
+          const data = await res.json();
+          if (res.ok && data.title) title = data.title as string;
+          else title = `영상 ${videoId}`;
+        } catch {
+          title = `영상 ${videoId}`;
+        }
+      }
+
+      const { data: existing, error: fetchError } = await supabase
+        .from("videos")
+        .select("id, course_id")
+        .eq("video_id", videoId)
+        .maybeSingle();
+      if (fetchError) throw fetchError;
+
+      if (existing) {
+        if (existing.course_id === courseId) {
+          setAddVideoToCourseMessage({ type: "error", text: "이미 이 재생목록에 포함된 영상입니다." });
+          return;
+        }
+        if (existing.course_id != null) {
+          setAddVideoToCourseMessage({
+            type: "error",
+            text: "다른 재생목록에 등록된 영상입니다. 먼저 해당 재생목록에서 제거해야 합니다.",
+          });
+          return;
+        }
+        const { error: updateError } = await supabase
+          .from("videos")
+          .update({ course_id: courseId, sort_order: nextSortOrder, title })
+          .eq("id", existing.id);
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase.from("videos").insert({
+          title,
+          video_id: videoId,
+          course_id: courseId,
+          sort_order: nextSortOrder,
+        });
+        if (insertError) throw insertError;
+      }
+
+      setAddVideoToCourseMessage({ type: "success", text: `"${courseTitle}" 재생목록에 영상이 추가되었습니다.` });
+      videosPageCache = null;
+      await loadVideos();
+      setAddVideoToCourseModal(null);
+    } catch (err: unknown) {
+      setAddVideoToCourseMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "영상 추가에 실패했습니다.",
+      });
+    } finally {
+      setAddVideoToCourseLoading(false);
     }
   }
 
@@ -946,8 +1080,8 @@ export default function AdminVideosPage() {
                   key={group.courseId ?? "none"}
                   className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
                 >
-                  <div className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-zinc-700">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 max-md:items-start max-md:flex-wrap dark:border-zinc-700">
+                    <div className="flex min-w-0 flex-1 items-center gap-3 max-md:min-w-full max-md:basis-full">
                       <div className="flex flex-col gap-0.5">
                         <button
                           type="button"
@@ -987,10 +1121,10 @@ export default function AdminVideosPage() {
                             isExpanded ? null : (group.courseId as string | null)
                           )
                         }
-                        className="flex flex-1 items-center justify-between gap-3 text-left min-w-0"
+                        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left max-md:items-start max-md:flex-wrap"
                       >
-                        <div className="min-w-0">
-                          <h3 className="text-base font-semibold text-slate-800 dark:text-white truncate">
+                        <div className="min-w-0 max-md:w-full max-md:basis-full">
+                          <h3 className="break-words text-base font-semibold text-slate-800 [overflow-wrap:anywhere] dark:text-white md:truncate">
                             {group.courseTitle}
                           </h3>
                           <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1002,7 +1136,23 @@ export default function AdminVideosPage() {
                         </span>
                       </button>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {group.courseId && (
+                        <button
+                          type="button"
+                          onClick={() => openAddVideoToCourseModal(group.courseId as string, group.courseTitle, group.videos)}
+                          className="rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+                        >
+                          영상 추가
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => openCourseAssigneesModal(group.courseTitle, ids)}
+                        className="rounded-lg bg-indigo-100 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
+                      >
+                        배정 학생
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleToggleCoursePreventSkip(group.courseId, group.videos)}
@@ -1032,7 +1182,7 @@ export default function AdminVideosPage() {
                         return (
                           <li
                             key={v.id}
-                            className="flex items-center gap-3 px-4 py-3 bg-slate-50/60 dark:bg-zinc-900"
+                            className="flex items-center gap-3 bg-slate-50/60 px-4 py-3 max-md:items-start max-md:flex-wrap dark:bg-zinc-900"
                           >
                             <div className="flex flex-col gap-0.5 shrink-0">
                               <button
@@ -1069,8 +1219,8 @@ export default function AdminVideosPage() {
                                 className="h-full w-full object-cover"
                               />
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                            <div className="min-w-0 flex-1 max-md:w-full max-md:min-w-full max-md:basis-full">
+                              <p className="break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere] dark:text-white md:line-clamp-2">
                                 <a
                                   href={`https://www.youtube.com/watch?v=${v.video_id}`}
                                   target="_blank"
@@ -1145,7 +1295,7 @@ export default function AdminVideosPage() {
                 return (
                   <li
                     key={v.id}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm max-md:items-start max-md:flex-wrap dark:border-zinc-800 dark:bg-zinc-900"
                   >
                     <div className="flex flex-col gap-0.5 shrink-0">
                       <button
@@ -1182,8 +1332,8 @@ export default function AdminVideosPage() {
                         className="h-full w-full object-cover"
                       />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-900 dark:text-white line-clamp-2">
+                    <div className="min-w-0 flex-1 max-md:w-full max-md:min-w-full max-md:basis-full">
+                      <p className="break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere] dark:text-white md:line-clamp-2">
                         <a
                           href={`https://www.youtube.com/watch?v=${v.video_id}`}
                           target="_blank"
@@ -1316,6 +1466,134 @@ export default function AdminVideosPage() {
                 닫기
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 재생목록별 배정 학생 모달 (이름만) */}
+      {courseAssigneesModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setCourseAssigneesModal(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="course-assignees-modal-title"
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <h2 id="course-assignees-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
+                배정 학생
+              </h2>
+              <p className="mt-0.5 break-words text-sm text-slate-500 [overflow-wrap:anywhere] dark:text-slate-400">
+                {courseAssigneesModal.title}
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
+              {courseAssigneesLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner />
+                </div>
+              ) : courseAssigneeList.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                  배정된 학생 없음
+                </p>
+              ) : (
+                <ul className="space-y-1" role="list">
+                  {courseAssigneeList.map((row) => (
+                    <li
+                      key={row.user_id}
+                      className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm font-medium text-slate-800 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-slate-200"
+                    >
+                      {row.full_name || row.email || row.user_id.slice(0, 8)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-4 py-3 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => setCourseAssigneesModal(null)}
+                className="w-full rounded-lg bg-slate-200 py-2 text-sm font-medium text-slate-800 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 재생목록에 영상 추가 모달 */}
+      {addVideoToCourseModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !addVideoToCourseLoading && setAddVideoToCourseModal(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-video-to-course-modal-title"
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="add-video-to-course-modal-title" className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">
+              영상 추가
+            </h2>
+            <p className="mb-4 break-words text-sm text-slate-500 [overflow-wrap:anywhere] dark:text-slate-400">
+              재생목록: {addVideoToCourseModal.courseTitle}
+            </p>
+            <form onSubmit={handleAddVideoToCourse}>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">YouTube URL</label>
+              <input
+                type="url"
+                value={addVideoToCourseUrl}
+                onChange={(e) => setAddVideoToCourseUrl(e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=..."
+                required
+                disabled={addVideoToCourseLoading}
+                className="mb-4 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">제목 (선택)</label>
+              <input
+                type="text"
+                value={addVideoToCourseTitle}
+                onChange={(e) => setAddVideoToCourseTitle(e.target.value)}
+                placeholder="비우면 자동"
+                disabled={addVideoToCourseLoading}
+                className="mb-4 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              />
+              {addVideoToCourseMessage && (
+                <div
+                  className={`mb-4 rounded-lg px-4 py-3 text-sm ${
+                    addVideoToCourseMessage.type === "error"
+                      ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                      : "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                  }`}
+                >
+                  {addVideoToCourseMessage.text}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddVideoToCourseModal(null)}
+                  disabled={addVideoToCourseLoading}
+                  className="flex-1 rounded-lg bg-slate-200 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  disabled={addVideoToCourseLoading}
+                  className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {addVideoToCourseLoading ? "추가 중..." : "추가"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

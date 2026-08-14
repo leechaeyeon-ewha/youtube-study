@@ -8,6 +8,16 @@ import KakaoBrowserBanner from "@/components/KakaoBrowserBanner";
 type Who = "admin" | "teacher" | "student" | null;
 type FormMode = "admin" | "teacher" | "student";
 
+const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
+const AUTH_ME_CACHE_TTL_MS = 5000;
+
+interface AuthMeProfile {
+  id?: string;
+  role?: string;
+  full_name?: string | null;
+  email?: string | null;
+}
+
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -18,6 +28,7 @@ function LoginPageContent() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -35,28 +46,41 @@ function LoginPageContent() {
     }
   }, []);
 
-  if (!mounted) return null;
+  if (!mounted) {
+    return <LoginFallback />;
+  }
 
-  const redirectByRole = async () => {
+  async function navigateWithFade(path: string, profileForCache?: AuthMeProfile): Promise<boolean> {
+    if (profileForCache && path === "/admin") {
+      sessionStorage.setItem(
+        AUTH_ME_CACHE_KEY,
+        JSON.stringify({ ...profileForCache, at: Date.now() })
+      );
+    }
+    setExiting(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    router.replace(path);
+    return true;
+  }
+
+  const redirectByRole = async (): Promise<boolean> => {
     const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!session?.access_token) return false;
     const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
-    if (!res.ok) return;
-    const profile = (await res.json()) as { role?: string };
+    if (!res.ok) return false;
+    const profile = (await res.json()) as AuthMeProfile;
     const role = profile?.role;
     if (role === "admin") {
-      if (typeof window !== "undefined") window.location.href = "/admin";
-      return;
+      return navigateWithFade("/admin", profile);
     }
     if (role === "teacher") {
-      if (typeof window !== "undefined") window.location.href = "/teacher";
-      return;
+      return navigateWithFade("/teacher");
     }
     if (role === "student") {
       if (typeof window !== "undefined") window.location.href = "/student";
-      return;
+      return true;
     }
-    if (typeof window !== "undefined") window.location.href = "/admin";
+    return navigateWithFade("/admin", profile);
   };
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
@@ -67,11 +91,12 @@ function LoginPageContent() {
     }
     setMessage(null);
     setLoading(true);
+    let navigated = false;
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       if (data?.session) {
-        await redirectByRole();
+        navigated = await redirectByRole();
         return;
       }
       router.replace("/admin");
@@ -82,7 +107,7 @@ function LoginPageContent() {
         text: err instanceof Error ? err.message : "로그인에 실패했습니다.",
       });
     } finally {
-      setLoading(false);
+      if (!navigated) setLoading(false);
     }
   };
 
@@ -94,6 +119,7 @@ function LoginPageContent() {
     }
     setMessage(null);
     setLoading(true);
+    let navigated = false;
     try {
       const name = fullName.trim();
       if (!name) {
@@ -116,7 +142,7 @@ function LoginPageContent() {
       });
       if (error) throw error;
       if (signInData?.session) {
-        await redirectByRole();
+        navigated = await redirectByRole();
         return;
       }
       router.replace("/teacher");
@@ -127,7 +153,7 @@ function LoginPageContent() {
         text: err instanceof Error ? err.message : "이름 또는 비밀번호가 맞지 않습니다.",
       });
     } finally {
-      setLoading(false);
+      if (!navigated) setLoading(false);
     }
   };
 
@@ -200,7 +226,14 @@ function LoginPageContent() {
 
   if (who === null) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
+      <>
+        {exiting && (
+          <div
+            className="login-fade-out-overlay fixed inset-0 z-50 bg-slate-50 dark:bg-zinc-950"
+            aria-hidden
+          />
+        )}
+        <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
         <KakaoBrowserBanner />
         <div className="mt-4 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mb-3 flex justify-center">
@@ -246,6 +279,7 @@ function LoginPageContent() {
           </div>
         </div>
       </div>
+      </>
     );
   }
 
@@ -253,7 +287,14 @@ function LoginPageContent() {
   const isTeacher = who === "teacher";
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
+    <>
+      {exiting && (
+        <div
+          className="login-fade-out-overlay fixed inset-0 z-50 bg-slate-50 dark:bg-zinc-950"
+          aria-hidden
+        />
+      )}
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-12 dark:bg-zinc-950">
         <KakaoBrowserBanner />
         <div className="mt-4 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-4 flex justify-center">
@@ -435,6 +476,7 @@ function LoginPageContent() {
         )}
       </div>
     </div>
+    </>
   );
 }
 
