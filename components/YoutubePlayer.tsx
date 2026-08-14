@@ -106,6 +106,8 @@ export default function YoutubePlayer({
   const [embedError, setEmbedError] = useState(false);
   const maxWatchedRef = useRef(initialPosition);
   const lastCurrentRef = useRef(initialPosition);
+  /** state===1 tick에서만 갱신 — buffering/pause 시 finalize에 사용 (seek 후 getCurrentTime 오염 방지) */
+  const lastPlayingPositionRef = useRef(initialPosition);
   const durationRef = useRef(0);
   const lastSavedPercentRef = useRef(0);
   const lastSaveTimeRef = useRef(0);
@@ -141,6 +143,7 @@ export default function YoutubePlayer({
   useEffect(() => {
     maxWatchedRef.current = initialPosition;
     lastCurrentRef.current = initialPosition;
+    lastPlayingPositionRef.current = initialPosition;
   }, [initialPosition]);
 
   useEffect(() => {
@@ -371,14 +374,15 @@ export default function YoutubePlayer({
               try {
                 const p = playerRef.current;
                 if (e.data !== 1) {
-                  const t = p.getCurrentTime();
-                  if (Number.isFinite(t)) finalizeSegment(t);
+                  const endSec = lastPlayingPositionRef.current;
+                  if (Number.isFinite(endSec)) finalizeSegment(endSec);
                 }
                 if (e.data === 0) {
                   const d = p.getDuration();
                   const t = p.getCurrentTime();
                   console.log("[progress-debug] ENDED", {
                     currentTime: t,
+                    lastPlayingPosition: lastPlayingPositionRef.current,
                     getDuration: d,
                     durationRef: durationRef.current,
                     watchedIntervalsRef: [...watchedIntervalsRef.current],
@@ -468,8 +472,8 @@ export default function YoutubePlayer({
         try {
           const p = playerRef.current;
           if (p) {
-            const t = p.getCurrentTime();
-            if (Number.isFinite(t)) finalizeSegment(t);
+            const endSec = lastPlayingPositionRef.current;
+            if (Number.isFinite(endSec)) finalizeSegment(endSec);
           }
         } catch {
           // ignore
@@ -567,10 +571,12 @@ export default function YoutubePlayer({
 
         const prevCurrent = lastCurrentRef.current;
         lastCurrentRef.current = current;
+        lastPlayingPositionRef.current = current;
 
         if (justBecameVisibleRef.current) {
           maxWatchedRef.current = Math.min(maxWatchedWhenHiddenRef.current, current);
           lastCurrentRef.current = maxWatchedRef.current;
+          lastPlayingPositionRef.current = maxWatchedRef.current;
           justBecameVisibleRef.current = false;
           return;
         }
