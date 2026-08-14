@@ -9,7 +9,6 @@ type Who = "admin" | "teacher" | "student" | null;
 type FormMode = "admin" | "teacher" | "student";
 
 const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
-const AUTH_ME_CACHE_TTL_MS = 5000;
 
 interface AuthMeProfile {
   id?: string;
@@ -51,7 +50,10 @@ function LoginPageContent() {
   }
 
   async function navigateWithFade(path: string, profileForCache?: AuthMeProfile): Promise<boolean> {
-    if (profileForCache && path === "/admin") {
+    if (
+      profileForCache &&
+      (path === "/admin" || path === "/teacher" || path === "/student")
+    ) {
       sessionStorage.setItem(
         AUTH_ME_CACHE_KEY,
         JSON.stringify({ ...profileForCache, at: Date.now() })
@@ -74,11 +76,10 @@ function LoginPageContent() {
       return navigateWithFade("/admin", profile);
     }
     if (role === "teacher") {
-      return navigateWithFade("/teacher");
+      return navigateWithFade("/teacher", profile);
     }
     if (role === "student") {
-      if (typeof window !== "undefined") window.location.href = "/student";
-      return true;
+      return navigateWithFade("/student", profile);
     }
     return navigateWithFade("/admin", profile);
   };
@@ -165,6 +166,7 @@ function LoginPageContent() {
     }
     setMessage(null);
     setLoading(true);
+    let navigated = false;
     try {
       const res = await fetch("/api/auth/student-email", {
         method: "POST",
@@ -180,21 +182,25 @@ function LoginPageContent() {
       });
       if (error) throw error;
       if (signInData?.session) {
-        const res = await fetch("/api/auth/me", {
+        const meRes = await fetch("/api/auth/me", {
           headers: { Authorization: `Bearer ${signInData.session.access_token}` },
         });
-        if (res.ok) {
-          const profile = (await res.json()) as { role?: string };
+        if (meRes.ok) {
+          const profile = (await meRes.json()) as AuthMeProfile;
           if (profile?.role === "teacher") {
             if (typeof window !== "undefined") window.location.href = "/teacher";
+            navigated = true;
             return;
           }
           if (profile?.role === "admin") {
             if (typeof window !== "undefined") window.location.href = "/admin";
+            navigated = true;
             return;
           }
+          navigated = await navigateWithFade("/student", profile);
+          return;
         }
-        if (typeof window !== "undefined") window.location.href = "/student";
+        navigated = await navigateWithFade("/student");
         return;
       }
       router.replace("/student");
@@ -205,7 +211,7 @@ function LoginPageContent() {
         text: err instanceof Error ? err.message : "이름 또는 비밀번호가 맞지 않습니다.",
       });
     } finally {
-      setLoading(false);
+      if (!navigated) setLoading(false);
     }
   };
 

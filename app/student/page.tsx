@@ -47,6 +47,48 @@ interface ReportData {
 const STANDALONE_PLAYLIST_ID = "standalone";
 const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
 
+const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
+const AUTH_ME_CACHE_TTL_MS = 5000;
+
+interface CachedAuthProfile {
+  id?: string;
+  role?: string;
+  full_name?: string | null;
+  email?: string | null;
+  at?: number;
+}
+
+function readStudentAuthCache(userId: string): CachedAuthProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(AUTH_ME_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedAuthProfile;
+    if (!parsed.at || Date.now() - parsed.at > AUTH_ME_CACHE_TTL_MS) {
+      sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+      return null;
+    }
+    if (parsed.role !== "student" || parsed.id !== userId) return null;
+    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+    return parsed;
+  } catch {
+    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+    return null;
+  }
+}
+
+function applyProfileToState(
+  profile: { full_name?: string | null; email?: string | null },
+  setFullName: (v: string | null) => void,
+  setProfileEmail: (v: string | null) => void,
+  setEmailInput: (v: string) => void
+) {
+  setFullName(profile.full_name ?? "학생");
+  const email = profile.email ?? null;
+  setProfileEmail(email);
+  setEmailInput(email && !email.endsWith("@academy.local") ? email : "");
+}
+
 /** 할당 목록에서 재생목록 카드 목록 생성 (개별 보충 영상 최상단) */
 function buildPlaylistCards(assignments: AssignmentRow[]): PlaylistCard[] {
   const byCourse = new Map<string, { title: string; count: number }>();
@@ -206,31 +248,64 @@ export default function StudentPage() {
         return;
       }
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, role, email")
-        .eq("id", user.id)
-        .single();
+      const cachedProfile = readStudentAuthCache(user.id);
+
+      if (cachedProfile) {
+        if (cachedProfile.role === "admin") {
+          setLoading(false);
+          router.replace("/admin");
+          return;
+        }
+        applyProfileToState(cachedProfile, setFullName, setProfileEmail, setEmailInput);
+
+        const { data, error: fetchError } = await supabase
+          .from("assignments")
+          .select(ASSIGNMENT_SELECT_STUDENT_LIST)
+          .eq("user_id", user.id);
+
+        if (cancelled) return;
+        if (fetchError) {
+          setError(fetchError.message);
+          setLoading(false);
+          return;
+        }
+        if (data == null) {
+          setError("데이터를 불러오지 못했습니다.");
+          setLoading(false);
+          return;
+        }
+
+        const list = (data ?? []) as AssignmentRow[];
+        const visible = list.filter((a) => a.is_visible !== false);
+        setAssignments(visible);
+        setLoading(false);
+        return;
+      }
+
+      const [profileRes, assignmentsRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("full_name, role, email")
+          .eq("id", user.id)
+          .single(),
+        supabase
+          .from("assignments")
+          .select(ASSIGNMENT_SELECT_STUDENT_LIST)
+          .eq("user_id", user.id),
+      ]);
 
       if (cancelled) return;
+
+      const profile = profileRes.data;
       if (profile?.role === "admin") {
         setLoading(false);
         router.replace("/admin");
         return;
       }
 
-      setFullName(profile?.full_name ?? "학생");
-      const email = profile?.email ?? null;
-      setProfileEmail(email);
-      setEmailInput(email && !email.endsWith("@academy.local") ? email : "");
+      applyProfileToState(profile ?? {}, setFullName, setProfileEmail, setEmailInput);
 
-      // assignments 테이블 실시간 반영 (캐시 없이 매 요청마다 DB 조회)
-      const { data, error: fetchError } = await supabase
-        .from("assignments")
-        .select(ASSIGNMENT_SELECT_STUDENT_LIST)
-        .eq("user_id", user.id);
-
-      if (cancelled) return;
+      const { data, error: fetchError } = assignmentsRes;
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
@@ -297,7 +372,13 @@ export default function StudentPage() {
     }
   }, [tab, reportData?.allowed]);
 
-  if (!mounted) return null;
+  if (!mounted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   if (loading) {
     return (

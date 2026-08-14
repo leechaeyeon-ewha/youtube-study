@@ -1,12 +1,20 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import {
+  COMPLETE_THRESHOLD_PERCENT,
+  mergeIntervals,
+  normalizeIntervals,
+  percentFromIntervals,
+  totalWatchedSeconds,
+  type WatchedInterval,
+} from "@/lib/watchIntervals";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 /**
  * 시청 진도 저장. assignment가 없으면 404, 있으면 먼저 null 필드 정규화 후 업데이트(upsert 스타일).
- * 기존 데이터 유무와 관계없이 항상 최신 상태 유지.
+ * watched_intervals가 비어 있지 않으면 서버에서 병합·재계산(클라이언트 progress_percent 미신뢰).
  */
 export async function POST(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -23,7 +31,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
-  let body: { assignmentId?: string; progress_percent?: number; is_completed?: boolean; last_position?: number; last_watched_at?: string; watched_seconds?: number };
+  let body: {
+    assignmentId?: string;
+    progress_percent?: number;
+    is_completed?: boolean;
+    last_position?: number;
+    last_watched_at?: string;
+    watched_seconds?: number;
+    watched_intervals?: unknown;
+    duration_sec?: number;
+  };
   try {
     body = await req.json();
   } catch {
@@ -39,14 +56,26 @@ export async function POST(req: Request) {
   const lastPosition = body?.last_position;
   const lastWatchedAt = body?.last_watched_at;
   const watchedSeconds = body?.watched_seconds;
-  if (
-    progressPercent == null ||
-    !Number.isFinite(Number(progressPercent)) ||
-    Number(progressPercent) < 0 ||
-    Number(progressPercent) > 100
-  ) {
-    return NextResponse.json({ error: "progress_percent가 필요합니다." }, { status: 400 });
+  const incomingIntervals = normalizeIntervals(body?.watched_intervals);
+  const durationSec = body?.duration_sec != null ? Number(body.duration_sec) : NaN;
+
+  const useIntervalPath = incomingIntervals.length > 0;
+
+  if (!useIntervalPath) {
+    if (
+      progressPercent == null ||
+      !Number.isFinite(Number(progressPercent)) ||
+      Number(progressPercent) < 0 ||
+      Number(progressPercent) > 100
+    ) {
+      return NextResponse.json({ error: "progress_percent가 필요합니다." }, { status: 400 });
+    }
+  } else {
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      return NextResponse.json({ error: "duration_sec가 올바르지 않습니다." }, { status: 400 });
+    }
   }
+
   if (lastPosition != null && (!Number.isFinite(Number(lastPosition)) || Number(lastPosition) < 0)) {
     return NextResponse.json({ error: "last_position이 올바르지 않습니다." }, { status: 400 });
   }
@@ -56,7 +85,7 @@ export async function POST(req: Request) {
 
   const { data: row, error: fetchErr } = await supabase
     .from("assignments")
-    .select("id, progress_percent, last_position, is_completed")
+    .select("id, progress_percent, last_position, is_completed, watched_intervals")
     .eq("id", assignmentId as string)
     .eq("user_id", user.id)
     .single();
@@ -65,7 +94,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "해당 과제를 찾을 수 없습니다." }, { status: 404 });
   }
 
-  // null 필드가 있으면 먼저 정규화(upsert 전제)
   const needNormalize =
     row.progress_percent == null || row.last_position == null || row.is_completed == null;
   if (needNormalize) {
@@ -80,14 +108,36 @@ export async function POST(req: Request) {
       .eq("user_id", user.id);
   }
 
-  const updatePayload: Record<string, unknown> = {
-    progress_percent: Number(progressPercent),
-    is_completed: Boolean(isCompleted),
-    last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
-    last_watched_at: lastWatchedAt ?? new Date().toISOString(),
-  };
-  if (watchedSeconds != null && Number.isFinite(watchedSeconds)) {
-    updatePayload.watched_seconds = Number(watchedSeconds);
+  const wasCompleted = row.is_completed === true;
+
+  let updatePayload: Record<string, unknown>;
+
+  if (useIntervalPath) {
+    const stored = normalizeIntervals(row.watched_intervals);
+    const merged: WatchedInterval[] = mergeIntervals([...stored, ...incomingIntervals]);
+    const calculatedPercent = percentFromIntervals(merged, durationSec);
+    const mergedWatchedSec = totalWatchedSeconds(merged);
+    const newCompleted =
+      wasCompleted || calculatedPercent >= COMPLETE_THRESHOLD_PERCENT;
+
+    updatePayload = {
+      watched_intervals: merged,
+      progress_percent: calculatedPercent,
+      is_completed: newCompleted,
+      last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
+      last_watched_at: lastWatchedAt ?? new Date().toISOString(),
+      watched_seconds: mergedWatchedSec,
+    };
+  } else {
+    updatePayload = {
+      progress_percent: Number(progressPercent),
+      is_completed: wasCompleted || Boolean(isCompleted),
+      last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
+      last_watched_at: lastWatchedAt ?? new Date().toISOString(),
+    };
+    if (watchedSeconds != null && Number.isFinite(watchedSeconds)) {
+      updatePayload.watched_seconds = Number(watchedSeconds);
+    }
   }
 
   let { error: updateErr } = await supabase
@@ -95,6 +145,24 @@ export async function POST(req: Request) {
     .update(updatePayload)
     .eq("id", assignmentId as string)
     .eq("user_id", user.id);
+
+  if (
+    updateErr &&
+    useIntervalPath &&
+    (updateErr.message?.includes("watched_intervals") || updateErr.message?.includes("does not exist"))
+  ) {
+    const legacyPayload = { ...updatePayload };
+    delete legacyPayload.watched_intervals;
+    if (progressPercent != null && Number.isFinite(Number(progressPercent))) {
+      legacyPayload.progress_percent = Number(progressPercent);
+    }
+    const { error: retryErr } = await supabase
+      .from("assignments")
+      .update(legacyPayload)
+      .eq("id", assignmentId as string)
+      .eq("user_id", user.id);
+    updateErr = retryErr;
+  }
 
   if (updateErr && updatePayload.watched_seconds !== undefined && (updateErr.message?.includes("watched_seconds") || updateErr.message?.includes("does not exist"))) {
     const payloadWithoutWatched = { ...updatePayload };

@@ -117,7 +117,13 @@ export default function StudentPlaylistPage() {
     };
   }, [playlistId]);
 
-  if (!mounted) return null;
+  if (!mounted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   if (loading) {
     return (

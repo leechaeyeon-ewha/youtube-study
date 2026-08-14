@@ -7,6 +7,34 @@ import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
+const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
+const AUTH_ME_CACHE_TTL_MS = 5000;
+
+function clearAuthMeCache() {
+  if (typeof window !== "undefined") {
+    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+  }
+}
+
+function readAuthMeCache(): Profile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(AUTH_ME_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Profile & { at?: number };
+    if (!parsed.at || Date.now() - parsed.at > AUTH_ME_CACHE_TTL_MS) {
+      sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+      return null;
+    }
+    if (parsed.role !== "teacher") return null;
+    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+    return parsed;
+  } catch {
+    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
+    return null;
+  }
+}
+
 export default function TeacherLayout({
   children,
 }: {
@@ -40,6 +68,13 @@ export default function TeacherLayout({
       if (!session?.access_token) {
         setLoading(false);
         router.replace("/login");
+        return;
+      }
+      const cachedProfile = readAuthMeCache();
+      if (cancelled) return;
+      if (cachedProfile) {
+        setProfile(cachedProfile);
+        setLoading(false);
         return;
       }
       const res = await fetch("/api/auth/me", {
@@ -144,6 +179,7 @@ export default function TeacherLayout({
               type="button"
               onClick={async () => {
                 if (!supabase) return;
+                clearAuthMeCache();
                 await supabase.auth.signOut();
                 router.replace("/login");
                 router.refresh();
@@ -203,6 +239,7 @@ export default function TeacherLayout({
                 type="button"
                 onClick={async () => {
                   if (!supabase) return;
+                  clearAuthMeCache();
                   await supabase.auth.signOut();
                   router.replace("/login");
                   router.refresh();
