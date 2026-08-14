@@ -5,7 +5,6 @@ import {
   mergeIntervals,
   normalizeIntervals,
   percentFromIntervals,
-  totalWatchedSeconds,
   type WatchedInterval,
 } from "@/lib/watchIntervals";
 
@@ -37,7 +36,6 @@ export async function POST(req: Request) {
     is_completed?: boolean;
     last_position?: number;
     last_watched_at?: string;
-    watched_seconds?: number;
     watched_intervals?: unknown;
     duration_sec?: number;
   };
@@ -55,7 +53,6 @@ export async function POST(req: Request) {
   const isCompleted = body?.is_completed;
   const lastPosition = body?.last_position;
   const lastWatchedAt = body?.last_watched_at;
-  const watchedSeconds = body?.watched_seconds;
   const incomingIntervals = normalizeIntervals(body?.watched_intervals);
   const durationSec = body?.duration_sec != null ? Number(body.duration_sec) : NaN;
 
@@ -78,9 +75,6 @@ export async function POST(req: Request) {
 
   if (lastPosition != null && (!Number.isFinite(Number(lastPosition)) || Number(lastPosition) < 0)) {
     return NextResponse.json({ error: "last_position이 올바르지 않습니다." }, { status: 400 });
-  }
-  if (watchedSeconds != null && (!Number.isFinite(Number(watchedSeconds)) || Number(watchedSeconds) < 0)) {
-    return NextResponse.json({ error: "watched_seconds가 올바르지 않습니다." }, { status: 400 });
   }
 
   const { data: row, error: fetchErr } = await supabase
@@ -116,7 +110,6 @@ export async function POST(req: Request) {
     const stored = normalizeIntervals(row.watched_intervals);
     const merged: WatchedInterval[] = mergeIntervals([...stored, ...incomingIntervals]);
     const calculatedPercent = percentFromIntervals(merged, durationSec);
-    const mergedWatchedSec = totalWatchedSeconds(merged);
     const newCompleted =
       wasCompleted || calculatedPercent >= COMPLETE_THRESHOLD_PERCENT;
 
@@ -126,7 +119,6 @@ export async function POST(req: Request) {
       is_completed: newCompleted,
       last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
-      watched_seconds: mergedWatchedSec,
     };
   } else {
     updatePayload = {
@@ -135,9 +127,6 @@ export async function POST(req: Request) {
       last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
     };
-    if (watchedSeconds != null && Number.isFinite(watchedSeconds)) {
-      updatePayload.watched_seconds = Number(watchedSeconds);
-    }
   }
 
   let { error: updateErr } = await supabase
@@ -159,17 +148,6 @@ export async function POST(req: Request) {
     const { error: retryErr } = await supabase
       .from("assignments")
       .update(legacyPayload)
-      .eq("id", assignmentId as string)
-      .eq("user_id", user.id);
-    updateErr = retryErr;
-  }
-
-  if (updateErr && updatePayload.watched_seconds !== undefined && (updateErr.message?.includes("watched_seconds") || updateErr.message?.includes("does not exist"))) {
-    const payloadWithoutWatched = { ...updatePayload };
-    delete payloadWithoutWatched.watched_seconds;
-    const { error: retryErr } = await supabase
-      .from("assignments")
-      .update(payloadWithoutWatched)
       .eq("id", assignmentId as string)
       .eq("user_id", user.id);
     updateErr = retryErr;

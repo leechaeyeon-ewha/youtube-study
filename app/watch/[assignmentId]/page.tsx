@@ -21,7 +21,6 @@ interface AssignmentRow {
   progress_percent?: number;
   last_position?: number;
   prevent_skip?: boolean;
-  watched_seconds?: number;
   watched_intervals?: unknown;
   videos: Video | null;
 }
@@ -158,7 +157,7 @@ export default function WatchPage() {
         .single();
 
       if (cancelled) return;
-      if (firstError && (firstError.message?.includes("watched_seconds") || firstError.message?.includes("watched_intervals") || firstError.message?.includes("does not exist"))) {
+      if (firstError && (firstError.message?.includes("watched_intervals") || firstError.message?.includes("does not exist"))) {
         const { data: fallbackData, error: fallbackError } = await supabase
           .from("assignments")
           .select(ASSIGNMENT_SELECT_WATCH_FALLBACK)
@@ -246,7 +245,6 @@ export default function WatchPage() {
               videoId={video.video_id}
               assignmentId={assignment.id as string}
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
-              initialWatchedSeconds={typeof assignment.watched_seconds === "number" ? assignment.watched_seconds : 0}
               initialWatchedIntervals={initialWatchedIntervals}
               preventSkip={assignment.prevent_skip !== false}
               onFirstProgress={handleRecordStartedAt}

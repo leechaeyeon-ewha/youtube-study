@@ -54,8 +54,6 @@ interface Props {
   videoId: string;
   assignmentId: string;
   initialPosition?: number;
-  /** 실제 시청한 누적 시간(초). legacy path용 */
-  initialWatchedSeconds?: number;
   /** 서버에 저장된 병합 시청 구간 */
   initialWatchedIntervals?: WatchedInterval[];
   /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 — 허용 시 실제 재생한 시간만 진도에 반영 */
@@ -97,7 +95,6 @@ export default function YoutubePlayer({
   videoId,
   assignmentId,
   initialPosition = 0,
-  initialWatchedSeconds = 0,
   initialWatchedIntervals = [],
   preventSkip = true,
   onFirstProgress,
@@ -128,8 +125,6 @@ export default function YoutubePlayer({
   const justBecameVisibleRef = useRef(false);
   /** 진도 1% 이상 시 onFirstProgress 한 번만 호출했는지 */
   const hasFiredFirstProgressRef = useRef(false);
-  /** 스킵 허용 시: 실제 재생한 누적 시간(초). 진도율 = totalWatchedSeconds / duration * 100 */
-  const totalWatchedSecondsRef = useRef(initialWatchedSeconds);
   /** 스킵 허용 시: 마지막으로 저장한 시점의 영상 위치(초). 시청 구간 전송용 */
   const lastSaveVideoPositionRef = useRef(initialPosition);
   /** 페이지 이탈 시 진도 저장용 (keepalive fetch에서 사용) */
@@ -147,10 +142,6 @@ export default function YoutubePlayer({
     maxWatchedRef.current = initialPosition;
     lastCurrentRef.current = initialPosition;
   }, [initialPosition]);
-
-  useEffect(() => {
-    totalWatchedSecondsRef.current = initialWatchedSeconds;
-  }, [initialWatchedSeconds]);
 
   useEffect(() => {
     watchedIntervalsRef.current = mergeIntervals(normalizeIntervals(initialWatchedIntervals));
@@ -199,7 +190,7 @@ export default function YoutubePlayer({
     if (preventSkip) {
       return (maxWatchedRef.current / duration) * 100;
     }
-    return (totalWatchedSecondsRef.current / duration) * 100;
+    return 0;
   }, [getOpenSegment, preventSkip]);
 
   const postProgress = useCallback(
@@ -267,7 +258,6 @@ export default function YoutubePlayer({
       if (percent === 0 && lastPositionSeconds === 0 && !completed) return;
 
       const progressPercent = completed ? 100 : Math.min(100, Math.round(percent * 100) / 100);
-      const watchedSec = preventSkip ? maxWatchedRef.current : totalWatchedSecondsRef.current;
       const newCompleted = isCompletedRef.current || completed || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
       if (newCompleted) isCompletedRef.current = true;
 
@@ -277,7 +267,6 @@ export default function YoutubePlayer({
         is_completed: newCompleted,
         last_position: lastPositionSeconds,
         last_watched_at: now,
-        watched_seconds: watchedSec,
       });
     },
     [assignmentId, getOpenSegment, postProgress, preventSkip]
@@ -489,7 +478,6 @@ export default function YoutubePlayer({
           body.progress_percent = Math.min(100, Math.round(progressPercent * 100) / 100);
         } else {
           body.progress_percent = Math.min(100, Math.round(progressPercent * 100) / 100);
-          body.watched_seconds = preventSkip ? maxWatchedRef.current : totalWatchedSecondsRef.current;
         }
 
         fetch("/api/progress", {
