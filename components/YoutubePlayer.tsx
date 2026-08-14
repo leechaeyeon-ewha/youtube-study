@@ -200,6 +200,7 @@ export default function YoutubePlayer({
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) return;
         lastAuthTokenRef.current = session.access_token;
+        console.log("[progress-debug] POST /api/progress", payload);
         await fetch("/api/progress", {
           method: "POST",
           headers: {
@@ -241,7 +242,7 @@ export default function YoutubePlayer({
         const newCompleted = isCompletedRef.current || completed || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
         if (newCompleted) isCompletedRef.current = true;
 
-        await postProgress({
+        const payload = {
           assignmentId: assignmentId as string,
           watched_intervals: intervalsToSend,
           duration_sec: duration,
@@ -249,7 +250,19 @@ export default function YoutubePlayer({
           is_completed: newCompleted,
           last_position: lastPositionSeconds,
           last_watched_at: now,
+        };
+        console.log("[progress-debug] saveProgress (interval path)", {
+          completed,
+          duration,
+          openSeg,
+          watchedIntervalsRef: [...watchedIntervalsRef.current],
+          intervalsToSend,
+          calculatedPercent,
+          clientProgressPercent: progressPercent,
+          payload,
         });
+
+        await postProgress(payload);
         return;
       }
 
@@ -261,13 +274,23 @@ export default function YoutubePlayer({
       const newCompleted = isCompletedRef.current || completed || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
       if (newCompleted) isCompletedRef.current = true;
 
-      await postProgress({
+      const legacyPayload = {
         assignmentId: assignmentId as string,
         progress_percent: progressPercent,
         is_completed: newCompleted,
         last_position: lastPositionSeconds,
         last_watched_at: now,
+      };
+      console.log("[progress-debug] saveProgress (legacy path)", {
+        completed,
+        percent,
+        duration: durationRef.current,
+        watchedIntervalsRef: [...watchedIntervalsRef.current],
+        clientProgressPercent: progressPercent,
+        payload: legacyPayload,
       });
+
+      await postProgress(legacyPayload);
     },
     [assignmentId, getOpenSegment, postProgress, preventSkip]
   );
@@ -350,6 +373,22 @@ export default function YoutubePlayer({
                 if (e.data !== 1) {
                   const t = p.getCurrentTime();
                   if (Number.isFinite(t)) finalizeSegment(t);
+                }
+                if (e.data === 0) {
+                  const d = p.getDuration();
+                  const t = p.getCurrentTime();
+                  console.log("[progress-debug] ENDED", {
+                    currentTime: t,
+                    getDuration: d,
+                    durationRef: durationRef.current,
+                    watchedIntervalsRef: [...watchedIntervalsRef.current],
+                    segmentOpen: segmentOpenRef.current,
+                    segmentStart: segmentStartRef.current,
+                    percentFromIntervals:
+                      d > 0
+                        ? percentFromIntervals(watchedIntervalsRef.current, d)
+                        : null,
+                  });
                 }
                 const r = p.getPlaybackRate();
                 if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
