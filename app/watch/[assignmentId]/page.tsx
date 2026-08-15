@@ -132,6 +132,23 @@ export default function WatchPage() {
     }
   }, [assignmentId, accessToken]);
 
+  const handleReviewSessionStart = useCallback(async () => {
+    const id = assignmentId as string | null;
+    if (!id || !accessToken) return;
+    try {
+      await fetch("/api/watch-start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ assignmentId: id }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [assignmentId, accessToken]);
+
   useEffect(() => {
     setMounted(true);
     return () => {
@@ -265,14 +282,16 @@ export default function WatchPage() {
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
               initialWatchedIntervals={initialWatchedIntervals}
               preventSkip={assignment.prevent_skip !== false}
+              initiallyCompleted={assignment.is_completed}
               onFirstProgress={handleRecordStartedAt}
+              onReviewSessionStart={handleReviewSessionStart}
             />
           </div>
         </div>
         <div className="watch-footer border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             {assignment.is_completed
-              ? "완료된 영상입니다."
+              ? "완료된 영상입니다. 플레이어에서 「복습하기」를 누르면 구간 이동이 자유로운 복습 모드로 다시 시청할 수 있습니다."
               : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 영상을 끝까지 시청하면 완료 처리됩니다.`}
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">

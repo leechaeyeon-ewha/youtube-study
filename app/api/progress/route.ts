@@ -38,6 +38,7 @@ export async function POST(req: Request) {
     last_watched_at?: string;
     watched_intervals?: unknown;
     duration_sec?: number;
+    isReviewMode?: boolean;
   };
   try {
     body = await req.json();
@@ -55,6 +56,7 @@ export async function POST(req: Request) {
   const lastWatchedAt = body?.last_watched_at;
   const incomingIntervals = normalizeIntervals(body?.watched_intervals);
   const durationSec = body?.duration_sec != null ? Number(body.duration_sec) : NaN;
+  const isReviewMode = body?.isReviewMode === true;
 
   const useIntervalPath = incomingIntervals.length > 0;
 
@@ -110,45 +112,54 @@ export async function POST(req: Request) {
     const stored = normalizeIntervals(row.watched_intervals);
     const merged: WatchedInterval[] = mergeIntervals([...stored, ...incomingIntervals]);
     const calculatedPercent = percentFromIntervals(merged, durationSec);
+    const storedPercent = Number(row.progress_percent ?? 0);
     const newCompleted =
       wasCompleted || calculatedPercent >= COMPLETE_THRESHOLD_PERCENT;
+    const progress_percent = wasCompleted
+      ? Math.max(storedPercent, calculatedPercent)
+      : calculatedPercent;
 
     const nextLastPosition =
       lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
-    const storedPercent = Number(row.progress_percent ?? 0);
 
     if (
       JSON.stringify(merged) === JSON.stringify(stored) &&
-      Math.abs(calculatedPercent - storedPercent) < 0.01 &&
+      Math.abs(progress_percent - storedPercent) < 0.01 &&
       newCompleted === wasCompleted &&
-      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1
+      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1 &&
+      !isReviewMode
     ) {
       return NextResponse.json({ ok: true, skipped: true });
     }
 
     updatePayload = {
       watched_intervals: merged,
-      progress_percent: calculatedPercent,
+      progress_percent: Math.min(100, progress_percent),
       is_completed: newCompleted,
       last_position: nextLastPosition,
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
     };
   } else {
     const nextProgress = Number(progressPercent);
+    const storedPercent = Number(row.progress_percent ?? 0);
     const nextCompleted = wasCompleted || Boolean(isCompleted);
+    const finalProgress = wasCompleted
+      ? Math.max(storedPercent, nextProgress)
+      : nextProgress;
     const nextLastPosition =
       lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
 
     if (
-      Math.abs(nextProgress - Number(row.progress_percent ?? 0)) < 0.01 &&
+      Math.abs(finalProgress - storedPercent) < 0.01 &&
       nextCompleted === wasCompleted &&
-      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1
+      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1 &&
+      !isReviewMode
     ) {
       return NextResponse.json({ ok: true, skipped: true });
     }
 
     updatePayload = {
-      progress_percent: nextProgress,
+      progress_percent: Math.min(100, finalProgress),
       is_completed: nextCompleted,
       last_position: nextLastPosition,
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
