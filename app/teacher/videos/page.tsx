@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import Modal from "@/components/Modal";
 
 interface VideoRow {
   id: string;
@@ -571,14 +572,9 @@ export default function TeacherVideosPage() {
       </section>
 
       {/* 할당 모달 (선택한 영상을 담당 학생에게 할당) */}
-      {assignModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setAssignModalOpen(false)}
-        >
+      <Modal open={assignModalOpen} onClose={() => setAssignModalOpen(false)}>
           <div
             className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">
               선택한 영상을 담당 학생에게 할당
@@ -656,8 +652,7 @@ export default function TeacherVideosPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

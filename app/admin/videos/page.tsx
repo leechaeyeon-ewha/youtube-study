@@ -7,6 +7,7 @@ import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import type { Video } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import Modal from "@/components/Modal";
 
 interface VideoWithCourse extends Video {
   sort_order?: number;
@@ -1385,17 +1386,14 @@ export default function AdminVideosPage() {
       </section>
 
       {/* 영상별 배정 현황 모달 (이름 / 진도율 / 최근 시청일) */}
-      {videoDetailModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setVideoDetailModal(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="video-detail-modal-title"
-        >
+      <Modal
+        open={!!videoDetailModal}
+        onClose={() => setVideoDetailModal(null)}
+        labelledBy="video-detail-modal-title"
+      >
+        {videoDetailModal && (
           <div
             className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
               <h2 id="video-detail-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -1455,21 +1453,18 @@ export default function AdminVideosPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* 재생목록별 배정 학생 모달 (이름만) */}
-      {courseAssigneesModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setCourseAssigneesModal(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="course-assignees-modal-title"
-        >
+      <Modal
+        open={!!courseAssigneesModal}
+        onClose={() => setCourseAssigneesModal(null)}
+        labelledBy="course-assignees-modal-title"
+      >
+        {courseAssigneesModal && (
           <div
             className="max-h-[85vh] w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
               <h2 id="course-assignees-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -1511,21 +1506,19 @@ export default function AdminVideosPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* 재생목록에 영상 추가 모달 */}
-      {addVideoToCourseModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !addVideoToCourseLoading && setAddVideoToCourseModal(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="add-video-to-course-modal-title"
-        >
+      <Modal
+        open={!!addVideoToCourseModal}
+        onClose={() => setAddVideoToCourseModal(null)}
+        dismissDisabled={addVideoToCourseLoading}
+        labelledBy="add-video-to-course-modal-title"
+      >
+        {addVideoToCourseModal && (
           <div
             className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
           >
             <h2 id="add-video-to-course-modal-title" className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">
               영상 추가
@@ -1583,13 +1576,12 @@ export default function AdminVideosPage() {
               </div>
             </form>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* 할당 모달 */}
-      {assignModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setAssignModalOpen(false)}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+      <Modal open={assignModalOpen} onClose={() => setAssignModalOpen(false)}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900">
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">선택한 영상을 할당</h3>
             <p className="mb-3 text-sm text-slate-600 dark:text-slate-400">대상: {selectedVideoIds.length}개 영상</p>
             <div className="mb-4 flex gap-4">
@@ -1661,13 +1653,11 @@ export default function AdminVideosPage() {
               <button type="button" onClick={handleAssignSubmit} disabled={assignLoading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">할당</button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
 
       {/* 설정 모달 (노출/주간과제 학생·반별) */}
-      {settingsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSettingsModalOpen(false)}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+      <Modal open={settingsModalOpen} onClose={() => setSettingsModalOpen(false)}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900">
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">선택한 영상의 노출/주간과제 설정</h3>
             <p className="mb-3 text-sm text-slate-600 dark:text-slate-400">대상: {selectedVideoIds.length}개 영상</p>
             <div className="mb-4">
@@ -1784,8 +1774,7 @@ export default function AdminVideosPage() {
               <button type="button" onClick={handleSettingsSubmit} disabled={settingsLoading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">적용</button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

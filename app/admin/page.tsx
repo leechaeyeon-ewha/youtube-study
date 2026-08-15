@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import Modal from "@/components/Modal";
 import {
   clearAdminDashboardCache,
   getAdminDashboardCache,
@@ -875,8 +876,7 @@ export default function AdminDashboardPage() {
       </section>
 
       {/* enrollment_status 마이그레이션 안내 모달 */}
-      {showMigrationModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <Modal open={showMigrationModal} closeOnBackdrop={false}>
           <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
             <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">
               퇴원/재원 기능 사용을 위한 설정
@@ -955,8 +955,7 @@ export default function AdminDashboardPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
 
       {/* 학생 목록 + 영상 할당 + 모니터링 */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -1447,8 +1446,7 @@ export default function AdminDashboardPage() {
       )}
 
       {/* 강사별 학생 할당 모달 */}
-      {assignTeacherId != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <Modal open={assignTeacherId != null} closeOnBackdrop={false}>
           <div className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">학생 할당</h3>
             <p className="mb-3 text-sm text-slate-600 dark:text-slate-400">
@@ -1497,8 +1495,7 @@ export default function AdminDashboardPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
 
     </div>
   );

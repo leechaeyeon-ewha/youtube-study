@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { revalidateStudentPaths as revalidateStudentPathsWithRetry } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import Modal from "@/components/Modal";
 
 interface AssignmentRow {
   id: string;
@@ -1033,8 +1034,8 @@ export default function AdminAssignPage() {
       </section>
 
       {/* 시청 상세 모달: 최초 시청 시작 시간 등 */}
-      {detailModalAssignment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <Modal open={!!detailModalAssignment} closeOnBackdrop={false}>
+        {detailModalAssignment && (
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">시청 상세</h3>
             {(() => {
@@ -1165,8 +1166,8 @@ export default function AdminAssignPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 }
