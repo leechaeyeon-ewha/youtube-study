@@ -338,9 +338,6 @@ export default function AdminAssignPage() {
 
   useEffect(() => {
     load();
-    return () => {
-      assignPageCache = null;
-    };
   }, []);
 
   if (!mounted) return null;
