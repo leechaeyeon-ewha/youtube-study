@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import type { Video } from "@/lib/types";
@@ -31,10 +32,14 @@ interface ClassRow {
   title: string;
 }
 
-const VIDEOS_CACHE_TTL_MS = 30 * 1000;
-let videosPageCache: { courseGroups: CourseGroup[]; at: number } | null = null;
+import {
+  clearAdminVideosCache,
+  getAdminVideosCache,
+  setAdminVideosCache,
+} from "@/lib/pageWarmup/adminVideos";
 
 export default function AdminVideosPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [courseGroups, setCourseGroups] = useState<CourseGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,8 +133,9 @@ export default function AdminVideosPage() {
       return;
     }
     const now = Date.now();
-    if (videosPageCache && now - videosPageCache.at < VIDEOS_CACHE_TTL_MS) {
-      setCourseGroups(videosPageCache.courseGroups);
+    const cached = getAdminVideosCache(now);
+    if (cached) {
+      setCourseGroups(cached.courseGroups as CourseGroup[]);
       setLoading(false);
       return;
     }
@@ -157,15 +163,14 @@ export default function AdminVideosPage() {
     if (!error && data && data.length >= 0) {
       const groups = buildCourseGroupsFromVideos(data);
       setCourseGroups(groups);
-      videosPageCache = { courseGroups: groups, at: Date.now() };
+      setAdminVideosCache({ courseGroups: groups });
     }
     setLoading(false);
   }
 
   async function loadStudentsAndClasses() {
     if (!supabase) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    const authHeaders: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     const [studentsRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       supabase.from("classes").select("id, title").order("title"),
@@ -263,10 +268,9 @@ export default function AdminVideosPage() {
     }
     setPlaylistLoading(true);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/import-playlist", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: session?.access_token ? `Bearer ${session.access_token}` : "" },
+        headers: { "Content-Type": "application/json", Authorization: accessToken ? `Bearer ${accessToken}` : "" },
         body: JSON.stringify({ playlist_url: playlistUrl.trim(), course_title: playlistCourseTitle.trim() || undefined }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; courseTitle?: string; added?: number; skipped?: number; total?: number };
@@ -286,10 +290,9 @@ export default function AdminVideosPage() {
     setRefreshTitlesMessage(null);
     setRefreshTitlesLoading(true);
     try {
-      const { data: { session } } = await supabase?.auth.getSession() ?? { data: { session: null } };
       const res = await fetch("/api/admin/refresh-video-titles", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: session?.access_token ? `Bearer ${session.access_token}` : "" },
+        headers: { "Content-Type": "application/json", Authorization: accessToken ? `Bearer ${accessToken}` : "" },
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string; updated?: number; total?: number };
       if (!res.ok) {
@@ -297,7 +300,7 @@ export default function AdminVideosPage() {
         return;
       }
       setRefreshTitlesMessage({ type: "success", text: data?.message ?? `${data.updated ?? 0}개 제목을 업데이트했습니다.` });
-      videosPageCache = null;
+      clearAdminVideosCache();
       loadVideos();
     } catch (err: unknown) {
       setRefreshTitlesMessage({ type: "error", text: err instanceof Error ? err.message : "제목 일괄 업데이트에 실패했습니다." });
@@ -448,7 +451,7 @@ export default function AdminVideosPage() {
       }
 
       setAddVideoToCourseMessage({ type: "success", text: `"${courseTitle}" 재생목록에 영상이 추가되었습니다.` });
-      videosPageCache = null;
+      clearAdminVideosCache();
       await loadVideos();
       setAddVideoToCourseModal(null);
     } catch (err: unknown) {
@@ -468,9 +471,8 @@ export default function AdminVideosPage() {
     await supabase.from("assignments").delete().eq("video_id", id);
     await supabase.from("videos").delete().eq("id", id);
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token && assignmentIds.length > 0) {
-      revalidateStudentPathsInBackground(session.access_token, assignmentIds);
+    if (accessToken && assignmentIds.length > 0) {
+      revalidateStudentPathsInBackground(accessToken, assignmentIds);
     }
     loadVideos();
   }
@@ -488,9 +490,8 @@ export default function AdminVideosPage() {
       if (error) throw error;
       setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다. (배정 자동 해제)` });
       setSelectedVideoIds([]);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && assignmentIds.length > 0) {
-        revalidateStudentPathsInBackground(session.access_token, assignmentIds);
+      if (accessToken && assignmentIds.length > 0) {
+        revalidateStudentPathsInBackground(accessToken, assignmentIds);
       }
       loadVideos();
     } catch (err: unknown) {
@@ -542,7 +543,7 @@ export default function AdminVideosPage() {
     const currOrder = curr.courseSortOrder;
 
     setReorderLoading(`course-${curr.courseId}`);
-    videosPageCache = null;
+    clearAdminVideosCache();
 
     const previousGroups = courseGroups;
     setCourseGroups((prevGroups) => {
@@ -579,7 +580,7 @@ export default function AdminVideosPage() {
     const nextOrder = next.courseSortOrder;
 
     setReorderLoading(`course-${curr.courseId}`);
-    videosPageCache = null;
+    clearAdminVideosCache();
 
     const previousGroups = courseGroups;
     setCourseGroups((prevGroups) => {
@@ -614,7 +615,7 @@ export default function AdminVideosPage() {
     const curr = group.videos[videoIndex];
     if (!prev || !curr) return;
     setReorderLoading(`video-${curr.id}`);
-    videosPageCache = null;
+    clearAdminVideosCache();
 
     const previousGroups = courseGroups;
     setCourseGroups((prevGroups) => {
@@ -651,7 +652,7 @@ export default function AdminVideosPage() {
     const next = group.videos[videoIndex + 1];
     if (!curr || !next) return;
     setReorderLoading(`video-${curr.id}`);
-    videosPageCache = null;
+    clearAdminVideosCache();
 
     const previousGroups = courseGroups;
     setCourseGroups((prevGroups) => {
@@ -741,9 +742,8 @@ export default function AdminVideosPage() {
       setAssignMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상을 ${userIds.length}명에게 할당했습니다. (중복 제외 ${added}건 추가)` });
       setSelectedVideoIds([]);
       setAssignModalOpen(false);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && newIds.length > 0) {
-        revalidateStudentPathsInBackground(session.access_token, newIds);
+      if (accessToken && newIds.length > 0) {
+        revalidateStudentPathsInBackground(accessToken, newIds);
       }
       setAssignClassId("");
       setAssignStudentIds([]);
@@ -825,7 +825,7 @@ export default function AdminVideosPage() {
         .from("assignments")
         .update({ prevent_skip: next })
         .eq("video_id", videoId);
-      videosPageCache = null;
+      clearAdminVideosCache();
       await loadVideos();
     } catch (err) {
       console.error(err);
@@ -865,7 +865,7 @@ export default function AdminVideosPage() {
         .from("assignments")
         .update({ prevent_skip: next })
         .in("video_id", videoIds);
-      videosPageCache = null;
+      clearAdminVideosCache();
       await loadVideos();
     } catch (err) {
       console.error(err);

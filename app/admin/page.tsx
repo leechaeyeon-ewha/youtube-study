@@ -2,9 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import {
+  clearAdminDashboardCache,
+  getAdminDashboardCache,
+  setAdminDashboardCache,
+} from "@/lib/pageWarmup/adminDashboard";
 
 interface Profile {
   id: string;
@@ -46,23 +52,15 @@ interface LibraryCourseGroup {
   videos: LibraryVideo[];
 }
 
-/** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
-const DASHBOARD_CACHE_TTL_MS = 30 * 1000;
-
 const ENROLLMENT_STATUS_MIGRATION_SQL = `-- profiles에 재원/퇴원 상태 컬럼 추가
 alter table public.profiles
   add column if not exists enrollment_status text not null default 'enrolled'
   check (enrollment_status in ('enrolled', 'withdrawn'));
 
 comment on column public.profiles.enrollment_status is 'enrolled: 재원생, withdrawn: 퇴원생';`;
-let dashboardCache: {
-  students: Profile[];
-  teachers: TeacherRow[];
-  classes: ClassRow[];
-  at: number;
-} | null = null;
 
 export default function AdminDashboardPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,18 +115,16 @@ export default function AdminDashboardPage() {
     }
 
     const now = Date.now();
-    const useCache = dashboardCache && now - dashboardCache.at < DASHBOARD_CACHE_TTL_MS;
-    if (useCache && dashboardCache) {
-      setStudents(dashboardCache.students);
-      setTeachers(dashboardCache.teachers);
-      setClasses(dashboardCache.classes);
+    const cached = getAdminDashboardCache(now);
+    if (cached) {
+      setStudents(cached.students as Profile[]);
+      setTeachers(cached.teachers as TeacherRow[]);
+      setClasses(cached.classes as ClassRow[]);
       setLoading(false);
       return;
     }
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const authHeaders: Record<string, string> = session?.access_token
-      ? { Authorization: `Bearer ${session.access_token}` }
+    const authHeaders: Record<string, string> = accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
       : {};
     const [studentsRes, teachersRes, classesRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
@@ -145,12 +141,11 @@ export default function AdminDashboardPage() {
     setClasses(nextClasses);
     setLoading(false);
 
-    dashboardCache = {
+    setAdminDashboardCache({
       students: nextStudents,
       teachers: nextTeachers,
       classes: nextClasses,
-      at: Date.now(),
-    };
+    });
   }
 
   useEffect(() => {
@@ -161,7 +156,7 @@ export default function AdminDashboardPage() {
     load();
     return () => {
       // 배정목록 탭으로 갔다가 돌아올 때마다 최신 데이터 로드하도록 캐시 비우기
-      dashboardCache = null;
+      clearAdminDashboardCache();
     };
   }, []);
 
@@ -180,12 +175,11 @@ export default function AdminDashboardPage() {
     }
     setAddLoading(true);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/students", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({ full_name: addFullName.trim(), password: addPassword }),
       });
@@ -194,7 +188,7 @@ export default function AdminDashboardPage() {
       setAddMessage({ type: "success", text: `${addFullName.trim()} 학생이 등록되었습니다.` });
       setAddFullName("");
       setAddPassword("");
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       setAddMessage({
@@ -219,12 +213,11 @@ export default function AdminDashboardPage() {
     }
     setAddTeacherLoading(true);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/teachers", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({
           password: addTeacherPassword,
@@ -236,7 +229,7 @@ export default function AdminDashboardPage() {
       setAddTeacherMessage({ type: "success", text: `${addTeacherName.trim()} 강사가 등록되었습니다.` });
       setAddTeacherPassword("");
       setAddTeacherName("");
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       setAddTeacherMessage({
@@ -253,18 +246,17 @@ export default function AdminDashboardPage() {
     if (!supabase) return;
     setDeleteTeacherId(teacherId);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/admin/teachers", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({ teacher_id: teacherId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "강사 삭제 실패");
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "강사 삭제에 실패했습니다.");
@@ -277,12 +269,11 @@ export default function AdminDashboardPage() {
     if (!assignTeacherId || !supabase) return;
     setAssignTeacherSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/admin/students/assign-teacher", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({
           teacherId: assignTeacherId,
@@ -293,7 +284,7 @@ export default function AdminDashboardPage() {
       if (!res.ok) throw new Error(data.error || "저장 실패");
       setAssignTeacherId(null);
       setAssignTeacherSelectedIds(new Set());
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "저장에 실패했습니다.");
@@ -378,9 +369,8 @@ export default function AdminDashboardPage() {
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
       setAssignUrl("");
       setAssignUserId(null);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && inserted?.id) {
-        revalidateStudentPathsInBackground(session.access_token, [inserted.id]);
+      if (accessToken && inserted?.id) {
+        revalidateStudentPathsInBackground(accessToken, [inserted.id]);
       }
       load();
     } catch (err: unknown) {
@@ -508,10 +498,9 @@ export default function AdminDashboardPage() {
         throw new Error(error.message);
       }
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
-      dashboardCache = null;
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && inserted?.id) {
-        revalidateStudentPathsInBackground(session.access_token, [inserted.id]);
+      clearAdminDashboardCache();
+      if (accessToken && inserted?.id) {
+        revalidateStudentPathsInBackground(accessToken, [inserted.id]);
       }
       await load();
     } catch (err: unknown) {
@@ -575,11 +564,10 @@ export default function AdminDashboardPage() {
         type: "success",
         text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
       });
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && newIds.length > 0) {
-        revalidateStudentPathsInBackground(session.access_token, newIds);
+      if (accessToken && newIds.length > 0) {
+        revalidateStudentPathsInBackground(accessToken, newIds);
       }
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       setAssignMessage({
@@ -599,12 +587,11 @@ export default function AdminDashboardPage() {
     setDeleteUserId(targetId);
     setDeleteLoading(true);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/students", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({ user_id: targetId, enrollment_status: "withdrawn" }),
       });
@@ -617,7 +604,7 @@ export default function AdminDashboardPage() {
         }
         throw new Error(msg);
       }
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
       // 재원생 탭 유지 → 남은 학생들이 그대로 보이도록 (퇴원생은 퇴원생 탭에서 확인)
     } catch (err: unknown) {
@@ -632,12 +619,11 @@ export default function AdminDashboardPage() {
   async function handleReEnroll(userId: string) {
     setReEnrollUserId(userId);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/students", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({ user_id: userId, enrollment_status: "enrolled" }),
       });
@@ -651,7 +637,7 @@ export default function AdminDashboardPage() {
         }
         throw new Error(msg);
       }
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "재원 복귀에 실패했습니다.");
@@ -668,18 +654,17 @@ export default function AdminDashboardPage() {
     setDeleteUserId(targetId);
     setDeleteLoading(true);
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
       const res = await fetch("/api/admin/students", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+          Authorization: accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({ user_id: targetId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "삭제 실패");
-      dashboardCache = null;
+      clearAdminDashboardCache();
       await load();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "삭제에 실패했습니다.");
@@ -913,11 +898,10 @@ export default function AdminDashboardPage() {
                   setMigrationError(null);
                   setMigrationRunning(true);
                   try {
-                    const { data: { session } } = await supabase!.auth.getSession();
                     const res = await fetch("/api/admin/migration/enrollment-status", {
                       method: "POST",
                       headers: {
-                        Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+                        Authorization: accessToken ? `Bearer ${accessToken}` : "",
                       },
                     });
                     const data = await res.json();
@@ -927,7 +911,7 @@ export default function AdminDashboardPage() {
                       return;
                     }
                     setShowMigrationModal(false);
-                    dashboardCache = null;
+                    clearAdminDashboardCache();
                     await load();
                     alert("enrollment_status 컬럼이 추가되었습니다. 퇴원/재원 기능을 사용할 수 있습니다.");
                   } catch (e) {

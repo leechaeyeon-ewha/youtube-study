@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -37,15 +38,14 @@ interface LibraryCourseGroup {
   videos: LibraryVideo[];
 }
 
-/** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
-const TEACHER_DASHBOARD_CACHE_TTL_MS = 30 * 1000;
-let teacherDashboardCache: {
-  students: Profile[];
-  classes: ClassRow[];
-  at: number;
-} | null = null;
+import {
+  clearTeacherDashboardCache,
+  getTeacherDashboardCache,
+  setTeacherDashboardCache,
+} from "@/lib/pageWarmup/teacherDashboard";
 
 export default function TeacherDashboardPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -73,15 +73,15 @@ export default function TeacherDashboardPage() {
       return;
     }
     const now = Date.now();
-    if (teacherDashboardCache && now - teacherDashboardCache.at < TEACHER_DASHBOARD_CACHE_TTL_MS) {
-      setStudents(teacherDashboardCache.students);
-      setClasses(teacherDashboardCache.classes);
+    const cached = getTeacherDashboardCache(now);
+    if (cached) {
+      setStudents(cached.students as Profile[]);
+      setClasses(cached.classes as ClassRow[]);
       setLoading(false);
       return;
     }
-    const { data: { session } } = await supabase.auth.getSession();
-    const authHeaders: Record<string, string> = session?.access_token
-      ? { Authorization: `Bearer ${session.access_token}` }
+    const authHeaders: Record<string, string> = accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
       : {};
     try {
       const [studentsRes, classesRes] = await Promise.all([
@@ -92,7 +92,7 @@ export default function TeacherDashboardPage() {
       const nextClasses = Array.isArray(classesRes) ? (classesRes as ClassRow[]) : [];
       setStudents(nextStudents);
       setClasses(nextClasses);
-      teacherDashboardCache = { students: nextStudents, classes: nextClasses, at: Date.now() };
+      setTeacherDashboardCache({ students: nextStudents, classes: nextClasses });
     } finally {
       setLoading(false);
     }
@@ -105,7 +105,7 @@ export default function TeacherDashboardPage() {
   useEffect(() => {
     if (mounted && supabase) load();
     return () => {
-      teacherDashboardCache = null;
+      clearTeacherDashboardCache();
     };
   }, [mounted]);
 
@@ -155,8 +155,7 @@ export default function TeacherDashboardPage() {
     setAssignPlaylistCourseKey(courseKey);
     setAssignMessage(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      if (!accessToken) {
         setAssignMessage({ type: "error", text: "로그인이 필요합니다." });
         return;
       }
@@ -167,14 +166,14 @@ export default function TeacherDashboardPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({ student_id: assignUserId, video_id: videoId }),
         });
         const resultData = await res.json().catch(() => ({})) as { id?: string; error?: string };
         if (res.ok && resultData.id) {
           inserted += 1;
-          revalidateStudentPathsInBackground(session.access_token, [resultData.id]);
+          revalidateStudentPathsInBackground(accessToken, [resultData.id]);
         } else {
           if (resultData.error?.includes("이미")) skipped += 1;
           else if (resultData.error) setAssignMessage({ type: "error", text: resultData.error });
@@ -184,7 +183,7 @@ export default function TeacherDashboardPage() {
         type: "success",
         text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
       });
-      teacherDashboardCache = null;
+      clearTeacherDashboardCache();
       load();
     } catch (err: unknown) {
       setAssignMessage({
@@ -197,15 +196,14 @@ export default function TeacherDashboardPage() {
   }
 
   async function handleStudentClassChange(studentId: string, classId: string | null) {
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setUpdatingClassId(studentId);
     try {
       const res = await fetch("/api/teacher/students", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ student_id: studentId, class_id: classId || null }),
       });
@@ -214,7 +212,7 @@ export default function TeacherDashboardPage() {
         alert(data.error || "반 변경에 실패했습니다.");
         return;
       }
-      teacherDashboardCache = null;
+      clearTeacherDashboardCache();
       await load();
     } finally {
       setUpdatingClassId(null);
@@ -222,14 +220,13 @@ export default function TeacherDashboardPage() {
   }
 
   async function handleStudentGradeChange(studentId: string, grade: string | null) {
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     try {
       const res = await fetch("/api/teacher/students", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ student_id: studentId, grade: grade || null }),
       });
@@ -247,20 +244,19 @@ export default function TeacherDashboardPage() {
   }
 
   async function handleReportToggle(studentId: string, currentEnabled: boolean) {
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setReportToggleUserId(studentId);
     try {
       const res = await fetch("/api/teacher/students", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ student_id: studentId, is_report_enabled: !currentEnabled }),
       });
       if (res.ok) {
-        teacherDashboardCache = null;
+        clearTeacherDashboardCache();
         await load();
       }
     } finally {
@@ -270,8 +266,7 @@ export default function TeacherDashboardPage() {
 
   async function handleAssignFromLibrary(videoDbId: string) {
     if (!assignUserId) return;
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setAssignFromLibraryVideoId(videoDbId);
     setAssignMessage(null);
     try {
@@ -279,7 +274,7 @@ export default function TeacherDashboardPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ student_id: assignUserId, video_id: videoDbId }),
       });
@@ -290,7 +285,7 @@ export default function TeacherDashboardPage() {
       }
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
       if (data.id) {
-        revalidateStudentPathsInBackground(session.access_token, [data.id]);
+        revalidateStudentPathsInBackground(accessToken, [data.id]);
       }
     } catch {
       setAssignMessage({ type: "error", text: "할당에 실패했습니다." });
@@ -325,12 +320,11 @@ export default function TeacherDashboardPage() {
     setAddLoading(true);
     setAddMessage(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/teacher/students", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ full_name: name, password: pw }),
       });
@@ -342,7 +336,7 @@ export default function TeacherDashboardPage() {
       setAddMessage({ type: "success", text: `${(data as { full_name?: string }).full_name || name} 학생이 등록되었습니다.` });
       setAddFullName("");
       setAddPassword("");
-      teacherDashboardCache = null;
+      clearTeacherDashboardCache();
       load();
     } catch {
       setAddMessage({ type: "error", text: "등록에 실패했습니다." });

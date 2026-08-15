@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { getThumbnailUrl } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -32,16 +33,14 @@ interface CourseGroup {
   videos: VideoWithCourse[];
 }
 
-const CLASSES_CACHE_TTL_MS = 30 * 1000;
-let classesPageCache: {
-  students: Profile[];
-  classes: ClassRow[];
-  classProgress: Record<string, number>;
-  courseGroups: CourseGroup[];
-  at: number;
-} | null = null;
+import {
+  clearAdminClassesCache,
+  getAdminClassesCache,
+  setAdminClassesCache,
+} from "@/lib/pageWarmup/adminClasses";
 
 export default function AdminClassesPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -76,17 +75,16 @@ export default function AdminClassesPage() {
       return;
     }
     const now = Date.now();
-    if (classesPageCache && now - classesPageCache.at < CLASSES_CACHE_TTL_MS) {
-      setStudents(classesPageCache.students);
-      setClasses(classesPageCache.classes);
-      setClassProgress(classesPageCache.classProgress);
-      setCourseGroups(classesPageCache.courseGroups);
+    const cached = getAdminClassesCache(now);
+    if (cached) {
+      setStudents(cached.students as Profile[]);
+      setClasses(cached.classes as ClassRow[]);
+      setClassProgress(cached.classProgress);
+      setCourseGroups(cached.courseGroups as CourseGroup[]);
       setLoading(false);
       return;
     }
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const authHeaders: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     const [studentsRes, classProgressRes, classesRes, videosRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/admin/class-progress-summary", { headers: authHeaders, cache: "no-store" }).then(async (r) => {
@@ -130,13 +128,12 @@ export default function AdminClassesPage() {
     }
 
     setLoading(false);
-    classesPageCache = {
+    setAdminClassesCache({
       students: studentsList,
       classes: nextClasses,
       classProgress: classProgressRes,
       courseGroups: nextGroups,
-      at: Date.now(),
-    };
+    });
   }
 
   useEffect(() => {
@@ -209,7 +206,7 @@ export default function AdminClassesPage() {
       if (error) throw error;
       setEditingClassId(null);
       setEditingTitle("");
-      classesPageCache = null;
+      clearAdminClassesCache();
       load();
     } catch (_err: unknown) {
       alert("반 이름 수정에 실패했습니다.");
@@ -275,9 +272,8 @@ export default function AdminClassesPage() {
       const className = classes.find((c) => c.id === bulkAssignClassId)?.title ?? "반";
       setBulkAssignMessage({ type: "success", text: `${className}에 ${inserted}건 배정되었습니다. (이미 있던 건 제외)` });
       setBulkAssignVideoIds([]);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token && newIds.length > 0) {
-        revalidateStudentPathsInBackground(session.access_token, newIds);
+      if (accessToken && newIds.length > 0) {
+        revalidateStudentPathsInBackground(accessToken, newIds);
       }
       load();
     } catch (err: unknown) {

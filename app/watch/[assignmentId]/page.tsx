@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { ASSIGNMENT_SELECT_WATCH, ASSIGNMENT_SELECT_WATCH_FALLBACK } from "@/lib/assignments";
 import { normalizeIntervals, type WatchedInterval } from "@/lib/watchIntervals";
 import { invalidateStudentAssignmentsCache } from "@/lib/studentAssignmentsCache";
@@ -53,8 +54,8 @@ function startedAtDebugError(...args: unknown[]) {
 }
 
 export default function WatchPage() {
+  const { accessToken, userId } = useAuth();
   const params = useParams();
-  const router = useRouter();
   const assignmentId = parseAssignmentId(params?.assignmentId);
 
   const [mounted, setMounted] = useState(false);
@@ -85,20 +86,16 @@ export default function WatchPage() {
     }
     recordedAssignmentIdsRef.current.add(id);
 
-    startedAtDebug("[started_at] 3. session 확인 중...");
-    let session: { access_token?: string } | null = null;
-    try {
-      const result = await supabase.auth.getSession();
-      session = result.data?.session ?? null;
-      startedAtDebug("[started_at] 4. session 존재:", !!session, ", token 있음:", !!session?.access_token);
-    } catch (e) {
-      startedAtDebugError("[started_at] getSession 예외:", e);
-      setStartedAtToast("로그인 세션 확인 실패");
+    startedAtDebug("[started_at] 3. accessToken 확인 중...");
+    if (!accessToken) {
+      startedAtDebugWarn("[started_at] 중단: accessToken 없음");
+      setStartedAtToast("로그인 세션이 없습니다.");
       recordedAssignmentIdsRef.current.delete(id);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
       return;
     }
+    startedAtDebug("[started_at] 4. token 있음:", !!accessToken);
 
     startedAtDebug("[started_at] 5. DB 업데이트 시도 중... (POST /api/watch-start)");
     startedAtDebug("[started_at] 6. 배정(assignment) 행 존재: 시청 페이지 진입 시 이미 조회됨 → 현재 페이지면 행 존재함");
@@ -108,7 +105,7 @@ export default function WatchPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ assignmentId: id as string }),
       });
@@ -133,7 +130,7 @@ export default function WatchPage() {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
     }
-  }, [assignmentId]);
+  }, [assignmentId, accessToken]);
 
   useEffect(() => {
     setMounted(true);
@@ -158,31 +155,25 @@ export default function WatchPage() {
     const id = assignmentId as string;
     let cancelled = false;
 
-    async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (cancelled) return;
-      if (!user) {
-        setLoading(false);
-        router.replace("/login");
-        return;
-      }
+    if (!userId) return;
 
+    async function load() {
       let data: unknown = null;
       let fetchError: { message?: string } | null = null;
-      const { data: firstData, error: firstError } = await supabase
+      const { data: firstData, error: firstError } = await supabase!
         .from("assignments")
         .select(ASSIGNMENT_SELECT_WATCH)
         .eq("id", id)
-        .eq("user_id", user.id)
+        .eq("user_id", userId!)
         .single();
 
       if (cancelled) return;
       if (firstError && (firstError.message?.includes("watched_intervals") || firstError.message?.includes("does not exist"))) {
-        const { data: fallbackData, error: fallbackError } = await supabase
+        const { data: fallbackData, error: fallbackError } = await supabase!
           .from("assignments")
           .select(ASSIGNMENT_SELECT_WATCH_FALLBACK)
           .eq("id", id)
-          .eq("user_id", user.id)
+          .eq("user_id", userId!)
           .single();
         if (cancelled) return;
         data = fallbackData;
@@ -209,13 +200,12 @@ export default function WatchPage() {
 
       // 데이터 정합성: null 필드가 있을 때만 기본값 정규화 API 호출
       if (needNormalize) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
+        if (accessToken) {
           fetch("/api/watch-ensure-progress", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({ assignmentId: id as string }),
           }).catch(() => {});
@@ -225,7 +215,7 @@ export default function WatchPage() {
 
     load();
     return () => { cancelled = true; };
-  }, [assignmentId]);
+  }, [assignmentId, userId, accessToken]);
 
   if (!mounted) return null;
 

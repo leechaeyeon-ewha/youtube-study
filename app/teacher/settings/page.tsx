@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
-type AuthSessionResponse = { data: { session: Session | null } };
-
 export default function TeacherSettingsPage() {
+  const { accessToken, profile } = useAuth();
   const [mounted, setMounted] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [currentEmail, setCurrentEmail] = useState<string | null>(null);
   const [emailInput, setEmailInput] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
@@ -24,17 +22,11 @@ export default function TeacherSettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !mounted) {
-      setLoading(false);
-      return;
-    }
-    supabase.auth.getSession().then(({ data: { session } }: AuthSessionResponse) => {
-      const email = session?.user?.email ?? null;
-      setCurrentEmail(email);
-      setEmailInput(email ?? "");
-      setLoading(false);
-    });
-  }, [mounted]);
+    if (!profile) return;
+    const email = profile.email ?? null;
+    setCurrentEmail(email);
+    setEmailInput(email ?? "");
+  }, [profile]);
 
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -47,13 +39,11 @@ export default function TeacherSettingsPage() {
     }
     setEmailSaving(true);
     try {
-      const { data: sessionData }: AuthSessionResponse = await supabase.auth.getSession() as AuthSessionResponse;
-      const session = sessionData.session;
       const res = await fetch("/api/teacher/email", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ email }),
       });
@@ -102,13 +92,6 @@ export default function TeacherSettingsPage() {
   }
 
   if (!mounted) return null;
-  if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <LoadingSpinner />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-10">

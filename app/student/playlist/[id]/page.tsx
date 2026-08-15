@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import {
   fetchStudentAssignmentsList,
   STUDENT_ASSIGNMENTS_CACHE_TTL_MS,
@@ -33,8 +34,8 @@ interface AssignmentRow {
 }
 
 export default function StudentPlaylistPage() {
+  const { userId } = useAuth();
   const params = useParams();
-  const router = useRouter();
   const playlistId = (params?.id as string) ?? "";
   const [mounted, setMounted] = useState(false);
   const [title, setTitle] = useState<string>("");
@@ -59,6 +60,9 @@ export default function StudentPlaylistPage() {
       return;
     }
 
+    if (!userId) return;
+    const uid = userId;
+
     let cancelled = false;
     async function load(fromFocus = false) {
       if (
@@ -69,15 +73,9 @@ export default function StudentPlaylistPage() {
         return;
       }
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
       const { data, error: fetchError } = await fetchStudentAssignmentsList(
-        supabase,
-        user.id,
+        supabase!,
+        uid,
         { force: fromFocus }
       );
 
@@ -131,7 +129,7 @@ export default function StudentPlaylistPage() {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-  }, [playlistId]);
+  }, [playlistId, userId]);
 
   if (!mounted) {
     return (

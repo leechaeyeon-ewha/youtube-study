@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -25,14 +26,14 @@ interface CourseGroup {
   videos: VideoRow[];
 }
 
-const TEACHER_VIDEOS_CACHE_TTL_MS = 30 * 1000;
-let teacherVideosCache: {
-  videos: VideoRow[];
-  students: StudentRow[];
-  at: number;
-} | null = null;
+import {
+  clearTeacherVideosCache,
+  getTeacherVideosCache,
+  setTeacherVideosCache,
+} from "@/lib/pageWarmup/teacherVideos";
 
 export default function TeacherVideosPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -62,23 +63,23 @@ export default function TeacherVideosPage() {
       return;
     }
     const now = Date.now();
-    if (teacherVideosCache && now - teacherVideosCache.at < TEACHER_VIDEOS_CACHE_TTL_MS) {
-      setVideos(teacherVideosCache.videos);
-      setStudents(teacherVideosCache.students);
+    const cached = getTeacherVideosCache(now);
+    if (cached) {
+      setVideos(cached.videos as VideoRow[]);
+      setStudents(cached.students as StudentRow[]);
       setLoading(false);
       return;
     }
-    const { data: { session } } = await supabase.auth.getSession();
-    const h: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     const [videosRes, studentsRes] = await Promise.all([
-      fetch("/api/teacher/videos", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/teacher/students", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/videos", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
     ]);
     const nextVideos = Array.isArray(videosRes) ? videosRes : [];
     const nextStudents = Array.isArray(studentsRes) ? studentsRes : [];
     setVideos(nextVideos);
     setStudents(nextStudents);
-    teacherVideosCache = { videos: nextVideos, students: nextStudents, at: Date.now() };
+    setTeacherVideosCache({ videos: nextVideos, students: nextStudents });
     setLoading(false);
   }
 
@@ -88,7 +89,7 @@ export default function TeacherVideosPage() {
   useEffect(() => {
     load();
     return () => {
-      teacherVideosCache = null;
+      clearTeacherVideosCache();
     };
   }, []);
 
@@ -134,14 +135,12 @@ export default function TeacherVideosPage() {
       }
     }
     if (!title) title = `영상 ${videoId}`;
-
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setSubmitLoading(true);
     try {
       const res = await fetch("/api/teacher/videos", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ url: urlInput, video_id: videoId, title }),
       });
       const data = await res.json();
@@ -152,7 +151,7 @@ export default function TeacherVideosPage() {
       setMessage({ type: "success", text: "영상이 등록되었습니다." });
       setUrlInput("");
       setTitleInput("");
-      teacherVideosCache = null;
+      clearTeacherVideosCache();
       await load();
     } finally {
       setSubmitLoading(false);
@@ -166,15 +165,14 @@ export default function TeacherVideosPage() {
       setPlaylistMessage({ type: "error", text: "재생목록 URL을 입력해 주세요." });
       return;
     }
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setPlaylistLoading(true);
     try {
       const res = await fetch("/api/teacher/import-playlist", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           playlist_url: playlistUrl.trim(),
@@ -192,7 +190,7 @@ export default function TeacherVideosPage() {
       });
       setPlaylistUrl("");
       setPlaylistCourseTitle("");
-      teacherVideosCache = null;
+      clearTeacherVideosCache();
       await load();
     } finally {
       setPlaylistLoading(false);
@@ -201,8 +199,7 @@ export default function TeacherVideosPage() {
 
   async function handleAssignSubmit() {
     if (selectedVideoIds.length === 0 || assignStudentIds.length === 0) return;
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setAssignLoading(true);
     setAssignMessage(null);
     try {
@@ -212,7 +209,7 @@ export default function TeacherVideosPage() {
         for (const studentId of assignStudentIds) {
           const res = await fetch("/api/teacher/assignments", {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
             body: JSON.stringify({ student_id: studentId, video_id: videoId }),
           });
           const data = await res.json();
@@ -227,7 +224,7 @@ export default function TeacherVideosPage() {
         setAssignStudentSearch("");
         setAssignModalOpen(false);
         setTimeout(() => setAssignMessage(null), 3000);
-        teacherVideosCache = null;
+        clearTeacherVideosCache();
         load();
       } else {
         setAssignMessage({ type: "error", text: errors[0] || "배정에 실패했습니다." });

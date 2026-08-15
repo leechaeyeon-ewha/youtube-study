@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccessTokenSync } from "@/lib/auth/accessTokenStore";
 import {
   COMPLETE_THRESHOLD_PERCENT,
   mergeIntervals,
@@ -208,6 +209,11 @@ export default function YoutubePlayer({
       return lastAuthTokenRef.current;
     }
     if (!supabase) return null;
+    const cached = getAccessTokenSync();
+    if (cached) {
+      lastAuthTokenRef.current = cached;
+      return cached;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token ?? null;
     lastAuthTokenRef.current = token;

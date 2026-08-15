@@ -1,50 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
-import type { Profile } from "@/lib/types";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import PrefetchLink from "@/components/PrefetchLink";
+import { getWarmUpForHref } from "@/lib/pageWarmup";
+import { AuthProvider } from "@/lib/auth/AuthProvider";
+import { useAuth, useAuthProfile } from "@/lib/auth/useAuth";
+import type { ProfileRole } from "@/lib/types";
 
-const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
-const AUTH_ME_CACHE_TTL_MS = 5000;
-
-function clearAuthMeCache() {
-  if (typeof window !== "undefined") {
-    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-  }
-}
-
-function readAuthMeCache(): Profile | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(AUTH_ME_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Profile & { at?: number };
-    if (!parsed.at || Date.now() - parsed.at > AUTH_ME_CACHE_TTL_MS) {
-      sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-      return null;
-    }
-    if (parsed.role !== "admin") return null;
-    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-    return parsed;
-  } catch {
-    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-    return null;
-  }
-}
-
-export default function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const router = useRouter();
+function AdminLayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const profile = useAuthProfile();
+  const { signOut } = useAuth();
   const [mounted, setMounted] = useState(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -52,78 +21,10 @@ export default function AdminLayout({
   }, []);
 
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    async function check() {
-      const client = supabase;
-      if (!client) {
-        setLoading(false);
-        return;
-      }
-      const { data: { session } } = await client.auth.getSession();
-      if (cancelled) return;
-      if (!session?.access_token) {
-        setLoading(false);
-        router.replace("/login");
-        return;
-      }
-      const cachedProfile = readAuthMeCache();
-      if (cancelled) return;
-      if (cachedProfile) {
-        setProfile(cachedProfile);
-        setLoading(false);
-        return;
-      }
-      const res = await fetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (cancelled) return;
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err?.error?.includes("프로필") ? "no_profile" : "";
-        setLoading(false);
-        router.replace(msg ? `/login?error=${msg}` : "/");
-        return;
-      }
-      const profileData = (await res.json()) as { role?: string } | null;
-      if (cancelled) return;
-      if (profileData?.role !== "admin") {
-        setLoading(false);
-        if (profileData?.role === "teacher") router.replace("/teacher");
-        else if (profileData?.role === "student") router.replace("/student");
-        else router.replace("/");
-        return;
-      }
-      setProfile(profileData as Profile);
-      setLoading(false);
-    }
-    check();
-    return () => { cancelled = true; };
-    // 마운트 시 한 번만 실행. 의존성에 router 넣으면 재실행으로 루프 가능성 있음.
-  }, []);
-
-  useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname]);
 
   if (!mounted) return null;
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-        <LoadingSpinner />
-      </div>
-    );
-  }
-
-  if (!profile) return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
-      <LoadingSpinner />
-    </div>
-  );
 
   const nav = [
     { href: "/admin", label: "대시보드" },
@@ -135,7 +36,6 @@ export default function AdminLayout({
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
-        {/* 모바일: 한 줄 로고 + 햄버거 */}
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 md:px-4 md:py-4">
           <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-6">
             <Link
@@ -152,9 +52,10 @@ export default function AdminLayout({
             </span>
             <nav className="hidden gap-1 md:flex">
               {nav.map(({ href, label }) => (
-                <Link
+                <PrefetchLink
                   key={href}
                   href={href}
+                  warmUp={getWarmUpForHref(href)}
                   className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                     pathname === href
                       ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
@@ -162,7 +63,7 @@ export default function AdminLayout({
                   }`}
                 >
                   {label}
-                </Link>
+                </PrefetchLink>
               ))}
             </nav>
           </div>
@@ -171,20 +72,14 @@ export default function AdminLayout({
               {profile.full_name ?? profile.email ?? "Admin"}
             </span>
             <Link
-              href="/"
+              href="/student"
               className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
             >
               학생 화면
             </Link>
             <button
               type="button"
-              onClick={async () => {
-                if (!supabase) return;
-                clearAuthMeCache();
-                await supabase.auth.signOut();
-                router.replace("/login");
-                router.refresh();
-              }}
+              onClick={() => signOut()}
               className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
             >
               로그아웃
@@ -209,14 +104,14 @@ export default function AdminLayout({
           </button>
         </div>
 
-        {/* 모바일 전용: 펼침 메뉴 */}
         {mobileMenuOpen && (
           <div className="border-t border-slate-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 md:hidden">
             <nav className="flex flex-col gap-0.5">
               {nav.map(({ href, label }) => (
-                <Link
+                <PrefetchLink
                   key={href}
                   href={href}
+                  warmUp={getWarmUpForHref(href)}
                   className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
                     pathname === href
                       ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
@@ -224,7 +119,7 @@ export default function AdminLayout({
                   }`}
                 >
                   {label}
-                </Link>
+                </PrefetchLink>
               ))}
             </nav>
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-zinc-700">
@@ -232,20 +127,14 @@ export default function AdminLayout({
                 {profile.full_name ?? profile.email ?? "Admin"}
               </span>
               <Link
-                href="/"
+                href="/student"
                 className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-zinc-700 dark:text-slate-200"
               >
                 학생 화면
               </Link>
               <button
                 type="button"
-                onClick={async () => {
-                  if (!supabase) return;
-                  clearAuthMeCache();
-                  await supabase.auth.signOut();
-                  router.replace("/login");
-                  router.refresh();
-                }}
+                onClick={() => signOut()}
                 className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-zinc-700 dark:text-slate-200"
               >
                 로그아웃
@@ -256,5 +145,19 @@ export default function AdminLayout({
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
     </div>
+  );
+}
+
+function adminWrongRoleRedirect(role: ProfileRole | null): string {
+  if (role === "teacher") return "/teacher";
+  if (role === "student") return "/student";
+  return "/";
+}
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <AuthProvider allowedRoles={["admin"]} resolveWrongRoleRedirect={adminWrongRoleRedirect}>
+      <AdminLayoutContent>{children}</AdminLayoutContent>
+    </AuthProvider>
   );
 }

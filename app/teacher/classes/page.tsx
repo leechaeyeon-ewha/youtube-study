@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import {
+  getTeacherClassesCache,
+  setTeacherClassesCache,
+} from "@/lib/pageWarmup/teacherClasses";
 
 interface StudentSummary {
   id: string;
@@ -18,6 +23,7 @@ interface ClassRow {
 }
 
 export default function TeacherClassesPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<StudentSummary[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -28,14 +34,24 @@ export default function TeacherClassesPage() {
       setLoading(false);
       return;
     }
-    const { data: { session } } = await supabase.auth.getSession();
-    const h: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const now = Date.now();
+    const cached = getTeacherClassesCache(now);
+    if (cached) {
+      setStudents(cached.students as StudentSummary[]);
+      setClasses(cached.classes as ClassRow[]);
+      setLoading(false);
+      return;
+    }
+    const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     const [studentsRes, classesRes] = await Promise.all([
-      fetch("/api/teacher/students", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/teacher/classes", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/classes", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
     ]);
-    setStudents(Array.isArray(studentsRes) ? studentsRes : []);
-    setClasses(Array.isArray(classesRes) ? classesRes : []);
+    const nextStudents = Array.isArray(studentsRes) ? studentsRes : [];
+    const nextClasses = Array.isArray(classesRes) ? classesRes : [];
+    setStudents(nextStudents);
+    setClasses(nextClasses);
+    setTeacherClassesCache({ students: nextStudents, classes: nextClasses });
     setLoading(false);
   }
 

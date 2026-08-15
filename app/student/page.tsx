@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Session } from "@supabase/supabase-js";
+import PrefetchLink from "@/components/PrefetchLink";
+import { warmStudentAssignmentsList } from "@/lib/pageWarmup";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import {
   fetchStudentAssignmentsList,
   STUDENT_ASSIGNMENTS_CACHE_TTL_MS,
@@ -52,36 +54,6 @@ const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
 
 /** window focus 재조회 최소 간격 (불필요한 전체 assignments refetch 방지) */
 const ASSIGNMENTS_FOCUS_REFETCH_MS = STUDENT_ASSIGNMENTS_CACHE_TTL_MS;
-
-const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
-const AUTH_ME_CACHE_TTL_MS = 5000;
-
-interface CachedAuthProfile {
-  id?: string;
-  role?: string;
-  full_name?: string | null;
-  email?: string | null;
-  at?: number;
-}
-
-function readStudentAuthCache(userId: string): CachedAuthProfile | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(AUTH_ME_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CachedAuthProfile;
-    if (!parsed.at || Date.now() - parsed.at > AUTH_ME_CACHE_TTL_MS) {
-      sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-      return null;
-    }
-    if (parsed.role !== "student" || parsed.id !== userId) return null;
-    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-    return parsed;
-  } catch {
-    sessionStorage.removeItem(AUTH_ME_CACHE_KEY);
-    return null;
-  }
-}
 
 function applyProfileToState(
   profile: { full_name?: string | null; email?: string | null },
@@ -205,6 +177,7 @@ function usePwaInstall() {
 }
 
 export default function StudentPage() {
+  const { accessToken, userId, profile, signOut } = useAuth();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [fullName, setFullName] = useState<string | null>(null);
@@ -239,11 +212,22 @@ export default function StudentPage() {
   }, []);
 
   useEffect(() => {
+    if (!profile) return;
+    if (profile.role === "admin") {
+      setLoading(false);
+      router.replace("/admin");
+      return;
+    }
+    applyProfileToState(profile, setFullName, setProfileEmail, setEmailInput);
+  }, [profile, router]);
+
+  useEffect(() => {
     if (!supabase) {
       setError("Supabase가 설정되지 않았습니다.");
       setLoading(false);
       return;
     }
+    if (!userId) return;
 
     let cancelled = false;
     async function load(fromFocus = false) {
@@ -255,46 +239,13 @@ export default function StudentPage() {
         return;
       }
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (cancelled) return;
-      if (!user) {
-        setLoading(false);
-        router.replace("/login");
-        return;
-      }
-
-      const cachedProfile = readStudentAuthCache(user.id);
-
-      const [profileRes, assignmentsResult] = await Promise.all([
-        cachedProfile
-          ? Promise.resolve({
-              data: {
-                full_name: cachedProfile.full_name,
-                role: cachedProfile.role,
-                email: cachedProfile.email,
-              },
-              error: null,
-            })
-          : supabase
-              .from("profiles")
-              .select("full_name, role, email")
-              .eq("id", user.id)
-              .single(),
-        fetchStudentAssignmentsList(supabase, user.id, { force: fromFocus }),
-      ]);
+      const { data, error: fetchError } = await fetchStudentAssignmentsList(
+        supabase!,
+        userId!,
+        { force: fromFocus }
+      );
 
       if (cancelled) return;
-
-      const profile = profileRes.data;
-      if (profile?.role === "admin") {
-        setLoading(false);
-        router.replace("/admin");
-        return;
-      }
-
-      applyProfileToState(profile ?? {}, setFullName, setProfileEmail, setEmailInput);
-
-      const { data, error: fetchError } = assignmentsResult;
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
@@ -320,40 +271,36 @@ export default function StudentPage() {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-    // 마운트 시 한 번만 실행. 포커스 시 재조회해 관리자 배정 해제 후 목록이 맞도록 함.
-  }, []);
+    // 포커스 시 재조회해 관리자 배정 해제 후 목록이 맞도록 함.
+  }, [userId]);
 
   useEffect(() => {
-    if (tab !== "report" || !supabase) return;
+    if (tab !== "report") return;
     setReportLoading(true);
     setReportError(null);
     setReportData(null);
-    supabase.auth.getSession().then((res: { data?: { session?: Session | null } }) => {
-      const session: Session | null = res?.data?.session ?? null;
-      const token = session?.access_token;
-      if (!token) {
-        setReportError("로그인 세션이 없습니다.");
-        setReportLoading(false);
-        return;
-      }
-      fetch("/api/report/me", { headers: { Authorization: `Bearer ${token}` } })
-        .then(async (res) => {
-          const json = (await res.json()) as ReportData & { error?: string };
-          if (!res.ok) {
-            setReportError(json?.error ?? "리포트를 불러오지 못했습니다.");
-            setReportData({ allowed: false });
-            return;
-          }
-          setReportData(json);
-          setReportError(null);
-        })
-        .catch(() => {
-          setReportError("리포트를 불러오지 못했습니다.");
-          setReportData(null);
-        })
-        .finally(() => setReportLoading(false));
-    });
-  }, [tab]);
+    if (!accessToken) {
+      setReportError("로그인 세션이 없습니다.");
+      setReportLoading(false);
+      return;
+    }
+    fetch("/api/report/me", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then(async (res) => {
+        const json = (await res.json()) as ReportData & { error?: string };
+        if (!res.ok) {
+          setReportError(json?.error ?? "리포트를 불러오지 못했습니다.");
+          setReportData({ allowed: false });
+          return;
+        }
+        setReportData(json);
+        setReportError(null);
+      })
+      .catch(() => {
+        setReportError("리포트를 불러오지 못했습니다.");
+        setReportData(null);
+      })
+      .finally(() => setReportLoading(false));
+  }, [tab, accessToken]);
 
   useEffect(() => {
     if (tab === "report" && reportData?.allowed && reportContentRef.current) {
@@ -409,12 +356,7 @@ export default function StudentPage() {
             </div>
             <button
               type="button"
-              onClick={async () => {
-                if (!supabase) return;
-                await supabase.auth.signOut();
-                router.replace("/login");
-                router.refresh();
-              }}
+              onClick={() => { void signOut(); }}
               className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-slate-200 dark:hover:bg-zinc-600"
             >
               로그아웃
@@ -473,12 +415,11 @@ export default function StudentPage() {
                 if (!supabase) return;
                 setEmailLoading(true);
                 try {
-                  const { data: { session } } = await supabase.auth.getSession();
                   const res = await fetch("/api/student/email", {
                     method: "PATCH",
                     headers: {
                       "Content-Type": "application/json",
-                      Authorization: session?.access_token ? `Bearer ${session.access_token}` : "",
+                      Authorization: accessToken ? `Bearer ${accessToken}` : "",
                     },
                     body: JSON.stringify({ email }),
                   });
@@ -728,9 +669,10 @@ export default function StudentPage() {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {playlists.map((playlist) => (
-                <Link
+                <PrefetchLink
                   key={playlist.id}
                   href={`/student/playlist/${encodeURIComponent(playlist.id)}`}
+                  warmUp={warmStudentAssignmentsList}
                   className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
                 >
                   <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
@@ -744,7 +686,7 @@ export default function StudentPage() {
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                     영상 {playlist.videoCount}개
                   </p>
-                </Link>
+                </PrefetchLink>
               ))}
             </div>
           </>

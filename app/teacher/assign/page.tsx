@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface AssignmentRow {
@@ -46,15 +47,14 @@ interface ClassRow {
   title: string;
 }
 
-const TEACHER_ASSIGN_CACHE_TTL_MS = 30 * 1000;
-let teacherAssignCache: {
-  assignments: AssignmentRow[];
-  students: StudentSummary[];
-  classes: ClassRow[];
-  at: number;
-} | null = null;
+import {
+  clearTeacherAssignCache,
+  getTeacherAssignCache,
+  setTeacherAssignCache,
+} from "@/lib/pageWarmup/teacherAssign";
 
 export default function TeacherAssignPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [students, setStudents] = useState<StudentSummary[]>([]);
@@ -109,10 +109,8 @@ export default function TeacherAssignPage() {
     setWatchStartsLoading(true);
     setWatchStartsError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/teacher/watch-starts?assignmentId=${encodeURIComponent(assignmentId)}`, { headers, cache: "no-store" });
+      const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const res = await fetch(`/api/teacher/watch-starts?assignmentId=${encodeURIComponent(assignmentId)}`, { headers: authHeaders, cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as { error?: string } | { id: string; started_at: string }[];
       if (!res.ok) {
         const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
@@ -140,10 +138,8 @@ export default function TeacherAssignPage() {
     setWatchSegmentsLoading(true);
     setWatchSegmentsError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/teacher/watch-segments?assignmentId=${encodeURIComponent(assignmentId)}`, { headers, cache: "no-store" });
+      const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const res = await fetch(`/api/teacher/watch-segments?assignmentId=${encodeURIComponent(assignmentId)}`, { headers: authHeaders, cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as { error?: string } | { start_sec: number; end_sec: number }[];
       if (!res.ok) {
         const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
@@ -171,19 +167,19 @@ export default function TeacherAssignPage() {
       return;
     }
     const now = Date.now();
-    if (teacherAssignCache && now - teacherAssignCache.at < TEACHER_ASSIGN_CACHE_TTL_MS) {
-      setStudents(teacherAssignCache.students);
-      setAssignments(teacherAssignCache.assignments);
-      setClasses(teacherAssignCache.classes);
+    const cached = getTeacherAssignCache(now);
+    if (cached) {
+      setStudents(cached.students as StudentSummary[]);
+      setAssignments(cached.assignments as AssignmentRow[]);
+      setClasses(cached.classes as ClassRow[]);
       setLoading(false);
       return;
     }
-    const { data: { session } } = await supabase.auth.getSession();
-    const h: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+    const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
-      fetch("/api/teacher/students", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/teacher/assignments-list", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/teacher/classes", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/assignments-list", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/teacher/classes", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
     ]);
     const nextStudents = Array.isArray(studentsRes) ? studentsRes : [];
     const nextAssignments = Array.isArray(assignmentsRes) ? assignmentsRes : [];
@@ -191,12 +187,11 @@ export default function TeacherAssignPage() {
     setStudents(nextStudents);
     setAssignments(nextAssignments);
     setClasses(nextClasses);
-    teacherAssignCache = {
+    setTeacherAssignCache({
       assignments: nextAssignments,
       students: nextStudents,
       classes: nextClasses,
-      at: Date.now(),
-    };
+    });
     setLoading(false);
   }
 
@@ -206,22 +201,21 @@ export default function TeacherAssignPage() {
   useEffect(() => {
     load();
     return () => {
-      teacherAssignCache = null;
+      clearTeacherAssignCache();
     };
   }, []);
 
   async function handleTogglePriority(assignmentId: string, current: boolean | undefined) {
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setPriorityToggleId(assignmentId);
     try {
       const res = await fetch(`/api/teacher/assignments/${assignmentId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ is_priority: !current }),
       });
       if (res.ok) {
-        teacherAssignCache = null;
+        clearTeacherAssignCache();
         await load();
       }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
@@ -231,17 +225,16 @@ export default function TeacherAssignPage() {
   }
 
   async function handleTogglePreventSkip(assignmentId: string, current: boolean | undefined) {
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setSkipToggleId(assignmentId);
     try {
       const res = await fetch(`/api/teacher/assignments/${assignmentId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ prevent_skip: !current }),
       });
       if (res.ok) {
-        teacherAssignCache = null;
+        clearTeacherAssignCache();
         await load();
       }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
@@ -252,14 +245,13 @@ export default function TeacherAssignPage() {
 
   async function handleUnassign(id: string) {
     if (!confirm("이 배정을 해제할까요?")) return;
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     const res = await fetch(`/api/teacher/assignments/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${session.access_token}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (res.ok) {
-      teacherAssignCache = null;
+      clearTeacherAssignCache();
       await load();
     }
     else alert((await res.json().catch(() => ({}))).error || "해제 실패");
@@ -278,16 +270,15 @@ export default function TeacherAssignPage() {
     const ids = selectedByStudent[userId] ?? [];
     if (ids.length === 0) return;
     if (!confirm(`선택한 ${ids.length}개의 배정을 해제할까요?`)) return;
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     for (const id of ids) {
       await fetch(`/api/teacher/assignments/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
-    teacherAssignCache = null;
+    clearTeacherAssignCache();
     await load();
   }
 
@@ -296,18 +287,17 @@ export default function TeacherAssignPage() {
     const list = assignments.filter((a) => a.user_id === userId);
     if (list.length === 0) return;
     if (!confirm(`이 학생의 배정 ${list.length}개를 모두 해제할까요?`)) return;
-    const { data: { session } } = await supabase!.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     const ids = list.map((a) => a.id);
     for (const id of ids) {
       await fetch(`/api/teacher/assignments/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
-    teacherAssignCache = null;
+    clearTeacherAssignCache();
     await load();
   }
 

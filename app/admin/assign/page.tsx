@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { revalidateStudentPaths as revalidateStudentPathsWithRetry } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -56,22 +57,15 @@ interface ClassRow {
   title: string;
 }
 
-interface AssignSummaryEntry {
-  total: number;
-  completed: number;
-  priority: number;
-}
-
-const ASSIGN_CACHE_TTL_MS = 30 * 1000;
-let assignPageCache: {
-  students: StudentSummary[];
-  teachers: TeacherRow[];
-  classes: ClassRow[];
-  assignSummaryByUser: Record<string, AssignSummaryEntry>;
-  at: number;
-} | null = null;
+import {
+  clearAdminAssignCache,
+  getAdminAssignCache,
+  setAdminAssignCache,
+  type AssignSummaryEntry,
+} from "@/lib/pageWarmup/adminAssign";
 
 export default function AdminAssignPage() {
+  const { accessToken } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
@@ -141,10 +135,8 @@ export default function AdminAssignPage() {
     setWatchStartsLoading(true);
     setWatchStartsError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/admin/watch-starts?assignmentId=${encodeURIComponent(assignmentId as string)}`, { headers, cache: "no-store" });
+      const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const res = await fetch(`/api/admin/watch-starts?assignmentId=${encodeURIComponent(assignmentId as string)}`, { headers: authHeaders, cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as { error?: string } | { id: string; started_at: string }[];
       if (!res.ok) {
         const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
@@ -172,10 +164,8 @@ export default function AdminAssignPage() {
     setWatchSegmentsLoading(true);
     setWatchSegmentsError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-      const res = await fetch(`/api/admin/watch-segments?assignmentId=${encodeURIComponent(assignmentId)}`, { headers, cache: "no-store" });
+      const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const res = await fetch(`/api/admin/watch-segments?assignmentId=${encodeURIComponent(assignmentId)}`, { headers: authHeaders, cache: "no-store" });
       const data = (await res.json().catch(() => ({}))) as { error?: string } | { start_sec: number; end_sec: number }[];
       if (!res.ok) {
         const errMsg = Array.isArray(data) ? undefined : (data as { error?: string }).error;
@@ -200,14 +190,13 @@ export default function AdminAssignPage() {
   /** 관리자가 배정을 수정한 뒤 학생/관리자/시청 페이지 캐시 무효화 (즉시 갱신용) */
   async function revalidateStudentPaths(assignmentIds?: string[]) {
     if (!supabase) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return;
-    await revalidateStudentPathsWithRetry(session.access_token, assignmentIds ?? []);
+    if (!accessToken) return;
+    await revalidateStudentPathsWithRetry(accessToken, assignmentIds ?? []);
   }
 
   /** 배정 변경 후 summary 갱신 + 해당 학생 상세 캐시 무효화 */
   async function refreshAfterAssignmentMutation(userId: string, assignmentIds?: string[]) {
-    assignPageCache = null;
+    clearAdminAssignCache();
     setAssignmentsByUser((prev) => {
       const next = { ...prev };
       delete next[userId];
@@ -223,12 +212,11 @@ export default function AdminAssignPage() {
   async function fetchAssignmentsForUser(userId: string, force = false) {
     if (!force && assignmentsByUser[userId]) return;
     if (!supabase) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return;
+    if (!accessToken) return;
     setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: true }));
     try {
       const res = await fetch(`/api/admin/assignments?userId=${encodeURIComponent(userId)}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
         cache: "no-store",
       });
       const data = res.ok ? await res.json() : [];
@@ -253,7 +241,7 @@ export default function AdminAssignPage() {
         alert(msg);
         return;
       }
-      assignPageCache = null;
+      clearAdminAssignCache();
       await refreshAfterAssignmentMutation(userId, [assignmentId]);
     } finally {
       setSkipToggleAssignmentId(null);
@@ -272,7 +260,7 @@ export default function AdminAssignPage() {
         alert(msg);
         return;
       }
-      assignPageCache = null;
+      clearAdminAssignCache();
       await refreshAfterAssignmentMutation(userId, [assignmentId]);
     } finally {
       setPriorityToggleAssignmentId(null);
@@ -285,18 +273,17 @@ export default function AdminAssignPage() {
       return;
     }
     const now = Date.now();
-    if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
-      setStudents(assignPageCache.students);
-      setTeachers(assignPageCache.teachers);
-      setClasses(assignPageCache.classes);
-      setAssignSummaryByUser(assignPageCache.assignSummaryByUser);
+    const cached = getAdminAssignCache(now);
+    if (cached) {
+      setStudents(cached.students as StudentSummary[]);
+      setTeachers(cached.teachers as TeacherRow[]);
+      setClasses(cached.classes as ClassRow[]);
+      setAssignSummaryByUser(cached.assignSummaryByUser);
       setLoading(false);
       return;
     }
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const authHeaders: Record<string, string> = session?.access_token
-      ? { Authorization: `Bearer ${session.access_token}` }
+    const authHeaders: Record<string, string> = accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
       : {};
 
     const [studentsRes, teachersRes, summaryRes, classesRes] = await Promise.all([
@@ -319,13 +306,12 @@ export default function AdminAssignPage() {
     setClasses(nextClasses);
     setAssignSummaryByUser(summaryRes);
     setLoading(false);
-    assignPageCache = {
+    setAdminAssignCache({
       students: nextStudents,
       teachers: nextTeachers,
       classes: nextClasses,
       assignSummaryByUser: summaryRes,
-      at: Date.now(),
-    };
+    });
   }
 
   function toggleSelectAssignment(userId: string, assignmentId: string) {

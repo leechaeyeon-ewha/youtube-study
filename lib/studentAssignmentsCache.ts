@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ASSIGNMENT_SELECT_STUDENT_LIST } from "@/lib/assignments";
+import { getUserIdSync } from "@/lib/auth/accessTokenStore";
+import { supabase } from "@/lib/supabase";
 
 const CACHE_KEY = "youtube_study_student_assignments_v1";
 /** /student ↔ /student/playlist/[id] 이동 시 중복 SELECT 방지 */
@@ -77,4 +79,12 @@ export async function fetchStudentAssignmentsList(
   const list = data ?? [];
   writeCache(userId, list);
   return { data: list, error: null, fromCache: false };
+}
+
+/** hover prefetch: sessionStorage 캐시를 미리 채움 (TTL hit 시 no-op) */
+export async function warmStudentAssignmentsList(): Promise<void> {
+  if (!supabase) return;
+  const userId = getUserIdSync();
+  if (!userId) return;
+  await fetchStudentAssignmentsList(supabase, userId, { force: false });
 }
