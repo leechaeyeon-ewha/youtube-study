@@ -51,7 +51,6 @@ export async function POST(req: Request) {
   }
 
   const progressPercent = body?.progress_percent;
-  const isCompleted = body?.is_completed;
   const lastPosition = body?.last_position;
   const lastWatchedAt = body?.last_watched_at;
   const incomingIntervals = normalizeIntervals(body?.watched_intervals);
@@ -142,10 +141,11 @@ export async function POST(req: Request) {
   } else {
     const nextProgress = Number(progressPercent);
     const storedPercent = Number(row.progress_percent ?? 0);
-    const nextCompleted = wasCompleted || Boolean(isCompleted);
     const finalProgress = wasCompleted
       ? Math.max(storedPercent, nextProgress)
       : nextProgress;
+    const nextCompleted =
+      wasCompleted || finalProgress >= COMPLETE_THRESHOLD_PERCENT;
     const nextLastPosition =
       lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
 

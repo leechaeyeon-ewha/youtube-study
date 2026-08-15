@@ -132,9 +132,14 @@ function CircularProgress({ percent, label }: { percent: number; label: string }
 }
 
 /** PWA 설치 가능 여부 및 홈 화면 추가 안내 */
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
+
 function usePwaInstall() {
   const [showBanner, setShowBanner] = useState(false);
-  const [installPrompt, setInstallPrompt] = useState<{ prompt: () => Promise<void> } | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [platform, setPlatform] = useState<"ios" | "android" | "other">("other");
   const [installing, setInstalling] = useState(false);
 
@@ -156,8 +161,11 @@ function usePwaInstall() {
     setShowBanner(isIos || isAndroid);
 
     const handler = (e: Event) => {
-      e.preventDefault();
-      setInstallPrompt({ prompt: () => (e as unknown as { prompt: () => Promise<void> }).prompt() });
+      const bip = e as BeforeInstallPromptEvent;
+      /** 커스텀 「앱 설치」 버튼용 — 브라우저 기본 배너 대신 우리 UI에서 prompt() 호출 */
+      bip.preventDefault();
+      setInstallPrompt(bip);
+      setShowBanner(true);
     };
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
@@ -168,8 +176,10 @@ function usePwaInstall() {
     setInstalling(true);
     try {
       await installPrompt.prompt();
+      await installPrompt.userChoice.catch(() => ({ outcome: "dismissed" as const, platform: "" }));
     } finally {
       setInstalling(false);
+      setInstallPrompt(null);
     }
   };
 
@@ -587,7 +597,7 @@ export default function StudentPage() {
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {platform === "android" && installPrompt && (
+                  {installPrompt && (
                     <button
                       type="button"
                       onClick={runInstall}

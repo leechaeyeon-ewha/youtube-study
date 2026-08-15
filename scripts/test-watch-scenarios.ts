@@ -4,6 +4,7 @@
  */
 import {
   COMPLETE_THRESHOLD_PERCENT,
+  isWatchComplete,
   mergeIntervals,
   normalizeIntervals,
   percentFromIntervals,
@@ -159,6 +160,17 @@ function assert(name: string, cond: boolean, detail: string) {
     "시나리오 8",
     res.path === "legacy" && res.percent === 75,
     `legacy path progress=${res.percent}% (클라이언트 progress_percent 그대로 반영)`
+  );
+}
+
+// 시나리오 9: 끝으로 스킵만 — 누적 진도 낮음, 완료 아님
+{
+  const intervals = watch(570, 600, []); // 마지막 30초만 (스킵 후 ENDED)
+  const pct = percentFromIntervals(intervals, DURATION);
+  assert(
+    "시나리오 9",
+    pct < COMPLETE_THRESHOLD_PERCENT && !isWatchComplete(pct, false),
+    `끝 스킵만 ${pct}% → 완료 아님 (기대 < ${COMPLETE_THRESHOLD_PERCENT}%)`
   );
 }
 

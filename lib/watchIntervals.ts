@@ -64,3 +64,11 @@ export function percentFromIntervals(
 }
 
 export const COMPLETE_THRESHOLD_PERCENT = 95;
+
+/** DB/클라이언트 공통 — 시청 완료(복습 가능) 판정 */
+export function isWatchComplete(
+  progressPercent: number | null | undefined,
+  isCompleted?: boolean | null
+): boolean {
+  return isCompleted === true || (progressPercent ?? 0) >= COMPLETE_THRESHOLD_PERCENT;
+}
