@@ -182,6 +182,8 @@ export default function YoutubePlayer({
   /** 복습 모드 — 스킵 방지 해제, 진도율 100% 유지 */
   const [isReviewMode, setIsReviewMode] = useState(false);
   const isReviewModeRef = useRef(false);
+  /** 복습하기 클릭 직후 ENDED 잔여 이벤트·진도 tick이 오버레이를 다시 띄우지 않도록 */
+  const reviewRestartingRef = useRef(false);
   /** 다른 탭으로 이동한 동안 진도 미적용: 탭이 hidden일 때 true */
   const tabHiddenRef = useRef(false);
   /** 탭이 hidden이 되었을 때의 maxWatched(진도로 인정한 최대 시청 위치) — 복귀 시 배경 재생분 반영 안 함 */
@@ -450,22 +452,41 @@ export default function YoutubePlayer({
 
   const handleStartReview = useCallback(() => {
     showCompleteOverlayRef.current = false;
+    reviewRestartingRef.current = true;
     setIsReviewMode(true);
     isReviewModeRef.current = true;
     setShowEndedOverlay(false);
     lastCurrentRef.current = 0;
     lastPlayingPositionRef.current = 0;
     lastSaveVideoPositionRef.current = 0;
+    maxWatchedRef.current = 0;
     segmentOpenRef.current = false;
     openSegment(0);
     try {
       const p = playerRef.current;
       if (p) {
+        // ENDED 상태에서 seekTo(0)+playVideo()가 무시되는 경우(짧은 영상 등) 대비
+        try {
+          p.pauseVideo();
+        } catch {
+          // ignore
+        }
         p.seekTo(0, true);
-        p.playVideo();
+        window.setTimeout(() => {
+          try {
+            playerRef.current?.playVideo();
+          } catch {
+            // ignore
+          }
+        }, 200);
+        window.setTimeout(() => {
+          reviewRestartingRef.current = false;
+        }, 2500);
+      } else {
+        reviewRestartingRef.current = false;
       }
     } catch {
-      // ignore
+      reviewRestartingRef.current = false;
     }
     try {
       onReviewSessionStart?.();
@@ -575,12 +596,23 @@ export default function YoutubePlayer({
                   if (Number.isFinite(endSec)) finalizeSegment(endSec);
                 }
 
+                if (e.data === 1 && isReviewModeRef.current) {
+                  reviewRestartingRef.current = false;
+                  showCompleteOverlayRef.current = false;
+                  setShowEndedOverlay(false);
+                }
+
                 if (e.data === 0) {
+                  if (reviewRestartingRef.current) {
+                    progressDebug("[progress-debug] ENDED ignored (review restart)");
+                    return;
+                  }
                   const d = p.getDuration() || durationRef.current;
                   if (d > 0) durationRef.current = d;
                   const accumulated = d > 0 ? getAccumulatedPercent(d) : 0;
-                  const shouldShowCompleteOverlay =
-                    isReviewModeRef.current || isAccumulatedProgressComplete(d);
+                  const shouldShowCompleteOverlay = isReviewModeRef.current
+                    ? true
+                    : isAccumulatedProgressComplete(d);
 
                   if (shouldShowCompleteOverlay) {
                     showCompleteOverlayRef.current = true;
@@ -861,10 +893,12 @@ export default function YoutubePlayer({
           }
           finalizeSegment(current);
           isCompletedRef.current = true;
-          showCompleteOverlayRef.current = true;
+          if (!isReviewModeRef.current) {
+            showCompleteOverlayRef.current = true;
+            setShowEndedOverlay(true);
+          }
           saveProgress(percentValue, true, lastPos);
           lastSavedPercentRef.current = 100;
-          setShowEndedOverlay(true);
           return;
         }
 
