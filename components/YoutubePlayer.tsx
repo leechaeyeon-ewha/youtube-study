@@ -182,6 +182,8 @@ export default function YoutubePlayer({
   /** 복습 모드 — 스킵 방지 해제, 진도율 100% 유지 */
   const [isReviewMode, setIsReviewMode] = useState(false);
   const isReviewModeRef = useRef(false);
+  /** 복습 중 실제 재생 중일 때 — 완료 오버레이·iframe 클릭 차단 해제 */
+  const [reviewPlaybackActive, setReviewPlaybackActive] = useState(false);
   /** 복습하기 클릭 직후 ENDED 잔여 이벤트·진도 tick이 오버레이를 다시 띄우지 않도록 */
   const reviewRestartingRef = useRef(false);
   /** 다른 탭으로 이동한 동안 진도 미적용: 탭이 hidden일 때 true */
@@ -453,6 +455,7 @@ export default function YoutubePlayer({
   const handleStartReview = useCallback(() => {
     showCompleteOverlayRef.current = false;
     reviewRestartingRef.current = true;
+    setReviewPlaybackActive(false);
     setIsReviewMode(true);
     isReviewModeRef.current = true;
     setShowEndedOverlay(false);
@@ -599,13 +602,21 @@ export default function YoutubePlayer({
                 if (e.data === 1 && isReviewModeRef.current) {
                   reviewRestartingRef.current = false;
                   showCompleteOverlayRef.current = false;
+                  setReviewPlaybackActive(true);
                   setShowEndedOverlay(false);
+                }
+
+                if (e.data === 2 && isReviewModeRef.current) {
+                  setReviewPlaybackActive(false);
                 }
 
                 if (e.data === 0) {
                   if (reviewRestartingRef.current) {
                     progressDebug("[progress-debug] ENDED ignored (review restart)");
                     return;
+                  }
+                  if (isReviewModeRef.current) {
+                    setReviewPlaybackActive(false);
                   }
                   const d = p.getDuration() || durationRef.current;
                   if (d > 0) durationRef.current = d;
@@ -839,7 +850,8 @@ export default function YoutubePlayer({
           return;
         }
 
-        if (effectivePreventSkip) {
+        const skipLocked = !isReviewModeRef.current && preventSkipRef.current;
+        if (skipLocked) {
           const jumpForward = current - prevCurrent > 1.5;
           const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
           if (jumpForward && aheadOfMax) {
@@ -881,10 +893,10 @@ export default function YoutubePlayer({
           }
         }
 
-        const lastPos = effectivePreventSkip ? maxWatchedRef.current : current;
+        const lastPos = skipLocked ? maxWatchedRef.current : current;
 
-        if (percentValue >= COMPLETE_THRESHOLD_PERCENT) {
-          if (!effectivePreventSkip && current > lastSaveVideoPositionRef.current) {
+        if (percentValue >= COMPLETE_THRESHOLD_PERCENT && !isReviewModeRef.current) {
+          if (!skipLocked && current > lastSaveVideoPositionRef.current) {
             const segmentDuration = current - lastSaveVideoPositionRef.current;
             if (segmentDuration <= 6) {
               sendWatchSegment(lastSaveVideoPositionRef.current, current);
@@ -905,7 +917,7 @@ export default function YoutubePlayer({
         const now = Date.now();
         if (now - lastSaveTimeRef.current >= PROGRESS_SAVE_INTERVAL_MS) {
           lastSaveTimeRef.current = now;
-          if (!effectivePreventSkip && current > lastSaveVideoPositionRef.current) {
+          if (!skipLocked && current > lastSaveVideoPositionRef.current) {
             const segmentDuration = current - lastSaveVideoPositionRef.current;
             if (segmentDuration <= 6) {
               sendWatchSegment(lastSaveVideoPositionRef.current, current);
@@ -964,7 +976,7 @@ export default function YoutubePlayer({
   }
 
   const completeOverlayVisible =
-    showEndedOverlay && (isReviewMode || progressPercent >= COMPLETE_THRESHOLD_PERCENT);
+    showEndedOverlay && !reviewPlaybackActive;
 
   return (
     <>
@@ -975,15 +987,19 @@ export default function YoutubePlayer({
             completeOverlayVisible ? " pointer-events-none" : ""
           }`}
         />
-        {/* 상단 제목·로고 영역 클릭 시 유튜브로 이동 방지 (영상 제목, 좌상단 로고 모두 포함) */}
+        {/* 상단 제목·로고 영역 클릭 시 유튜브로 이동 방지 (복습 모드에서는 해제) */}
         <div
-          className="absolute left-0 right-0 top-0 z-10 h-12 cursor-default"
+          className={`absolute left-0 right-0 top-0 z-10 h-12 cursor-default${
+            isReviewMode ? " pointer-events-none" : ""
+          }`}
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
-        {/* 우하단: 유튜브 버튼·학원 로고만 클릭 차단 (설정 톱니는 클릭 가능하도록 영역을 우측 끝으로만 제한) */}
+        {/* 우하단: 유튜브 버튼·학원 로고 클릭 차단 (복습 모드에서는 해제) */}
         <div
-          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default"
+          className={`absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default${
+            isReviewMode ? " pointer-events-none" : ""
+          }`}
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
