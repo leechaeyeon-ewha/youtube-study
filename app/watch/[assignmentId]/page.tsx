@@ -241,6 +241,7 @@ export default function WatchPage() {
 
   const video = assignment.videos;
   const initialWatchedIntervals: WatchedInterval[] = normalizeIntervals(assignment.watched_intervals);
+  const preventSkip = assignment.prevent_skip !== false;
 
   return (
     <div className="watch-page-landscape flex min-h-[100dvh] flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
@@ -265,14 +266,16 @@ export default function WatchPage() {
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
               initialWatchedIntervals={initialWatchedIntervals}
               initialProgressPercent={assignment.progress_percent ?? 0}
-              preventSkip={false}
+              preventSkip={preventSkip}
               onFirstProgress={handleRecordStartedAt}
             />
           </div>
         </div>
         <div className="watch-footer border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            저장된 진도: {(assignment.progress_percent ?? 0).toFixed(1)}% · 시청한 구간만 진도에 반영됩니다.
+            {preventSkip
+              ? `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 스킵 방지가 켜져 있어 앞으로 건너뛸 수 없습니다.`
+              : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 시청한 구간만 진도에 반영됩니다.`}
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
             재생 배속은 1.4배속까지만 지원됩니다. 가로 모드로 보시면 와이드 뷰가 적용됩니다.

@@ -144,6 +144,18 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
 
 const FIRST_PROGRESS_THRESHOLD = 1;
 
+/** 스킵 방지 ON — 이미 시청한 구간 끝까지는 탐색 허용 */
+function initialMaxWatchedSec(
+  position: number,
+  intervals: WatchedInterval[],
+  skipLock: boolean
+): number {
+  if (!skipLock) return position;
+  const merged = mergeIntervals(normalizeIntervals(intervals));
+  const maxEnd = merged.reduce((max, [, end]) => Math.max(max, end), 0);
+  return Math.max(position, maxEnd);
+}
+
 export default function YoutubePlayer({
   videoId,
   assignmentId,
@@ -153,12 +165,17 @@ export default function YoutubePlayer({
   preventSkip = true,
   onFirstProgress,
 }: Props) {
+  const initialMaxWatched = initialMaxWatchedSec(
+    initialPosition,
+    initialWatchedIntervals,
+    preventSkip
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [ready, setReady] = useState(false);
   const [embedError, setEmbedError] = useState(false);
-  const maxWatchedRef = useRef(initialPosition);
+  const maxWatchedRef = useRef(initialMaxWatched);
   const lastCurrentRef = useRef(initialPosition);
   const lastPlayingPositionRef = useRef(initialPosition);
   const durationRef = useRef(0);
@@ -172,7 +189,7 @@ export default function YoutubePlayer({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabHiddenRef = useRef(false);
-  const maxWatchedWhenHiddenRef = useRef(initialPosition);
+  const maxWatchedWhenHiddenRef = useRef(initialMaxWatched);
   const justBecameVisibleRef = useRef(false);
   const hasFiredFirstProgressRef = useRef(false);
   const lastSaveVideoPositionRef = useRef(initialPosition);
@@ -186,7 +203,29 @@ export default function YoutubePlayer({
 
   useEffect(() => {
     preventSkipRef.current = preventSkip;
-  }, [preventSkip]);
+    const maxW = initialMaxWatchedSec(initialPosition, initialWatchedIntervals, preventSkip);
+    maxWatchedRef.current = maxW;
+    maxWatchedWhenHiddenRef.current = maxW;
+  }, [preventSkip, initialPosition, initialWatchedIntervals]);
+
+  useEffect(() => {
+    maxWatchedRef.current = initialMaxWatchedSec(
+      initialPosition,
+      initialWatchedIntervals,
+      preventSkipRef.current
+    );
+    maxWatchedWhenHiddenRef.current = maxWatchedRef.current;
+    lastCurrentRef.current = initialPosition;
+    lastPlayingPositionRef.current = initialPosition;
+  }, [initialPosition, initialWatchedIntervals]);
+
+  useEffect(() => {
+    watchedIntervalsRef.current = mergeIntervals(normalizeIntervals(initialWatchedIntervals));
+  }, [initialWatchedIntervals]);
+
+  useEffect(() => {
+    lastSaveVideoPositionRef.current = initialPosition;
+  }, [initialPosition]);
 
   const getAccumulatedPercent = (duration: number): number => {
     if (!Number.isFinite(duration) || duration <= 0) return 0;
@@ -205,20 +244,6 @@ export default function YoutubePlayer({
     }
     return 0;
   };
-
-  useEffect(() => {
-    maxWatchedRef.current = initialPosition;
-    lastCurrentRef.current = initialPosition;
-    lastPlayingPositionRef.current = initialPosition;
-  }, [initialPosition]);
-
-  useEffect(() => {
-    watchedIntervalsRef.current = mergeIntervals(normalizeIntervals(initialWatchedIntervals));
-  }, [initialWatchedIntervals]);
-
-  useEffect(() => {
-    lastSaveVideoPositionRef.current = initialPosition;
-  }, [initialPosition]);
 
   const getOpenSegment = useCallback((): WatchedInterval | null => {
     if (!segmentOpenRef.current) return null;
