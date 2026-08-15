@@ -78,26 +78,62 @@ function getPageOrigin(): string {
   return window.location.origin;
 }
 
+function getOriginFromIframeApiScript(script: HTMLScriptElement): string | null {
+  try {
+    return new URL(script.src).searchParams.get("origin");
+  } catch {
+    return null;
+  }
+}
+
+/** 이전 배포 URL 등으로 로드된 iframe_api 스크립트·YT 전역 상태 제거 */
+function resetYoutubeAPIState(): void {
+  document.querySelectorAll('script[src*="youtube.com/iframe_api"]').forEach((el) => el.remove());
+  delete window.YT;
+  delete window.onYouTubeIframeAPIReady;
+}
+
 function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
   if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.YT?.Player) return Promise.resolve(window.YT);
 
   const origin = getPageOrigin();
   const scriptSrc = origin
     ? `https://www.youtube.com/iframe_api?origin=${encodeURIComponent(origin)}`
     : "https://www.youtube.com/iframe_api";
 
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[src*="youtube.com/iframe_api"]');
-    if (existing) {
-      const check = () => (window.YT?.Player ? resolve(window.YT) : setTimeout(check, 50));
-      check();
-      return;
-    }
+  const existing = document.querySelector(
+    'script[src*="youtube.com/iframe_api"]'
+  ) as HTMLScriptElement | null;
 
+  if (existing) {
+    const scriptOrigin = getOriginFromIframeApiScript(existing);
+    // SPA 이동·캐시·이전 배포 등으로 origin이 어긋나면 스크립트 재로드
+    if (origin && scriptOrigin !== origin) {
+      progressDebug("[youtube] iframe_api origin mismatch — reload", {
+        scriptOrigin,
+        currentOrigin: origin,
+      });
+      resetYoutubeAPIState();
+    } else if (window.YT?.Player) {
+      return Promise.resolve(window.YT);
+    } else {
+      return new Promise((resolve, reject) => {
+        const check = () => (window.YT?.Player ? resolve(window.YT!) : setTimeout(check, 50));
+        check();
+        setTimeout(() => {
+          if (!window.YT?.Player) reject(new Error("YT not loaded"));
+        }, 15000);
+      });
+    }
+  }
+
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+
+  return new Promise((resolve, reject) => {
     const tag = document.createElement("script");
     tag.src = scriptSrc;
     tag.async = true;
+    if (origin) tag.dataset.ytOrigin = origin;
     const firstScript = document.getElementsByTagName("script")[0];
     firstScript?.parentNode?.insertBefore(tag, firstScript);
 
@@ -140,8 +176,9 @@ export default function YoutubePlayer({
   const lastKnownRateRef = useRef<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 영상 종료 시 추천 영상 클릭 방지용 오버레이 표시 (YT.PlayerState.ENDED === 0) */
+  /** 영상 종료 시 추천 영상 클릭 방지용 오버레이 (복습하기 전까지 유지) */
   const [showEndedOverlay, setShowEndedOverlay] = useState(initiallyCompleted);
+  const showCompleteOverlayRef = useRef(initiallyCompleted);
   /** 복습 모드 — 스킵 방지 해제, 진도율 100% 유지 */
   const [isReviewMode, setIsReviewMode] = useState(false);
   const isReviewModeRef = useRef(false);
@@ -173,6 +210,7 @@ export default function YoutubePlayer({
       isCompletedRef.current = true;
       lastSavedPercentRef.current = 100;
       setProgressPercent(100);
+      showCompleteOverlayRef.current = true;
       setShowEndedOverlay(true);
     }
   }, [initiallyCompleted]);
@@ -411,6 +449,7 @@ export default function YoutubePlayer({
   }, [saveProgress]);
 
   const handleStartReview = useCallback(() => {
+    showCompleteOverlayRef.current = false;
     setIsReviewMode(true);
     isReviewModeRef.current = true;
     setShowEndedOverlay(false);
@@ -543,7 +582,10 @@ export default function YoutubePlayer({
                   const shouldShowCompleteOverlay =
                     isReviewModeRef.current || isAccumulatedProgressComplete(d);
 
-                  setShowEndedOverlay(shouldShowCompleteOverlay);
+                  if (shouldShowCompleteOverlay) {
+                    showCompleteOverlayRef.current = true;
+                    setShowEndedOverlay(true);
+                  }
 
                   if (
                     shouldShowCompleteOverlay &&
@@ -568,9 +610,8 @@ export default function YoutubePlayer({
                     showOverlay: shouldShowCompleteOverlay,
                     watchedIntervalsRef: [...watchedIntervalsRef.current],
                   });
-                } else {
-                  setShowEndedOverlay(false);
                 }
+                // PAUSED/BUFFERING 등으로 오버레이를 숨기지 않음 — hover·일시정지 시 버튼 사라짐 방지
 
                 const r = p.getPlaybackRate();
                 if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
@@ -820,6 +861,7 @@ export default function YoutubePlayer({
           }
           finalizeSegment(current);
           isCompletedRef.current = true;
+          showCompleteOverlayRef.current = true;
           saveProgress(percentValue, true, lastPos);
           lastSavedPercentRef.current = 100;
           setShowEndedOverlay(true);
@@ -887,12 +929,17 @@ export default function YoutubePlayer({
     );
   }
 
+  const completeOverlayVisible =
+    showEndedOverlay && (isReviewMode || progressPercent >= COMPLETE_THRESHOLD_PERCENT);
+
   return (
     <>
       <div className="relative aspect-video overflow-hidden rounded-xl bg-black shadow-2xl">
         <div
           ref={containerRef}
-          className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
+          className={`absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full${
+            completeOverlayVisible ? " pointer-events-none" : ""
+          }`}
         />
         {/* 상단 제목·로고 영역 클릭 시 유튜브로 이동 방지 (영상 제목, 좌상단 로고 모두 포함) */}
         <div
@@ -921,10 +968,12 @@ export default function YoutubePlayer({
             </div>
         )}
         {/* 영상 종료 시 추천 영상 클릭 방지: 전체 플레이어를 덮어 클릭 불가 */}
-        {showEndedOverlay && (isReviewMode || progressPercent >= COMPLETE_THRESHOLD_PERCENT) && (
+        {completeOverlayVisible && (
           <div
-            className="absolute inset-0 z-20 flex cursor-default flex-col items-center justify-center gap-4 bg-black/60 px-4 backdrop-blur-[1px]"
+            className="absolute inset-0 z-50 flex cursor-default flex-col items-center justify-center gap-4 bg-black/60 px-4 backdrop-blur-[1px]"
             title="영상 시청이 완료되었습니다"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <p className="rounded-lg bg-slate-900/90 px-4 py-2 text-center text-sm font-medium text-white">
               영상 시청이 완료되었습니다
