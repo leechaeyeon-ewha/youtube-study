@@ -8,7 +8,6 @@ import {
   mergeIntervals,
   normalizeIntervals,
   percentFromIntervals,
-  totalWatchedSeconds,
   type WatchedInterval,
 } from "@/lib/watchIntervals";
 
@@ -63,14 +62,12 @@ interface Props {
   initialPosition?: number;
   /** 서버에 저장된 병합 시청 구간 */
   initialWatchedIntervals?: WatchedInterval[];
+  /** 저장된 진도율 (0~100) — UI 초기 표시용 */
+  initialProgressPercent?: number;
   /** true: 건너뛰기 방지(기본), false: 건너뛰기 허용 — 허용 시 실제 재생한 시간만 진도에 반영 */
   preventSkip?: boolean;
-  /** 이미 시청 완료된 배정 — 진입 시 완료 오버레이·복습하기 제공 */
-  initiallyCompleted?: boolean;
   /** 진도율이 1% 이상이 되는 순간 한 번만 호출 (최초 시청 시작 기록용) */
   onFirstProgress?: () => void;
-  /** 복습 모드 시작 시 호출 (watch_starts 등 학습 시간 기록) */
-  onReviewSessionStart?: () => void;
 }
 
 function getPageOrigin(): string {
@@ -107,7 +104,6 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
 
   if (existing) {
     const scriptOrigin = getOriginFromIframeApiScript(existing);
-    // SPA 이동·캐시·이전 배포 등으로 origin이 어긋나면 스크립트 재로드
     if (origin && scriptOrigin !== origin) {
       progressDebug("[youtube] iframe_api origin mismatch — reload", {
         scriptOrigin,
@@ -146,17 +142,16 @@ function loadYoutubeAPI(): Promise<NonNullable<Window["YT"]>> {
   });
 }
 
-const FIRST_PROGRESS_THRESHOLD = 1; // 1% 이상이면 최초 시청 시작으로 간주
+const FIRST_PROGRESS_THRESHOLD = 1;
 
 export default function YoutubePlayer({
   videoId,
   assignmentId,
   initialPosition = 0,
   initialWatchedIntervals = [],
+  initialProgressPercent = 0,
   preventSkip = true,
-  initiallyCompleted = false,
   onFirstProgress,
-  onReviewSessionStart,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -165,71 +160,34 @@ export default function YoutubePlayer({
   const [embedError, setEmbedError] = useState(false);
   const maxWatchedRef = useRef(initialPosition);
   const lastCurrentRef = useRef(initialPosition);
-  /** state===1 tick에서만 갱신 — buffering/pause 시 finalize에 사용 (seek 후 getCurrentTime 오염 방지) */
   const lastPlayingPositionRef = useRef(initialPosition);
   const durationRef = useRef(0);
-  const lastSavedPercentRef = useRef(initiallyCompleted ? 100 : 0);
+  const savedProgressRef = useRef(Math.min(100, Math.max(0, initialProgressPercent)));
+  const lastSavedPercentRef = useRef(savedProgressRef.current);
   const lastSaveTimeRef = useRef(0);
-  const [progressPercent, setProgressPercent] = useState(initiallyCompleted ? 100 : 0);
+  const [progressPercent, setProgressPercent] = useState(savedProgressRef.current);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const skipAlertCooldownRef = useRef(0);
   const lastKnownRateRef = useRef<number>(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 영상 종료 시 추천 영상 클릭 방지용 오버레이 (복습하기 전까지 유지) */
-  const [showEndedOverlay, setShowEndedOverlay] = useState(initiallyCompleted);
-  const showCompleteOverlayRef = useRef(initiallyCompleted);
-  /** 복습 모드 — 스킵 방지 해제, 진도율 100% 유지 */
-  const [isReviewMode, setIsReviewMode] = useState(false);
-  const isReviewModeRef = useRef(false);
-  /** 복습 중 실제 재생 중일 때 — 완료 오버레이·iframe 클릭 차단 해제 */
-  const [reviewPlaybackActive, setReviewPlaybackActive] = useState(false);
-  /** 복습하기 클릭 직후 ENDED 잔여 이벤트·진도 tick이 오버레이를 다시 띄우지 않도록 */
-  const reviewRestartingRef = useRef(false);
-  /** 다른 탭으로 이동한 동안 진도 미적용: 탭이 hidden일 때 true */
   const tabHiddenRef = useRef(false);
-  /** 탭이 hidden이 되었을 때의 maxWatched(진도로 인정한 최대 시청 위치) — 복귀 시 배경 재생분 반영 안 함 */
   const maxWatchedWhenHiddenRef = useRef(initialPosition);
-  /** 탭이 방금 visible로 바뀐 직후 한 번만 배경 재생분을 제외하고 보정 */
   const justBecameVisibleRef = useRef(false);
-  /** 진도 1% 이상 시 onFirstProgress 한 번만 호출했는지 */
   const hasFiredFirstProgressRef = useRef(false);
-  /** 스킵 허용 시: 마지막으로 저장한 시점의 영상 위치(초). 시청 구간 전송용 */
   const lastSaveVideoPositionRef = useRef(initialPosition);
-  /** 페이지 이탈 시 진도 저장용 (keepalive fetch에서 사용) */
   const lastAuthTokenRef = useRef<string | null>(null);
   const lastProgressPayloadKeyRef = useRef<string | null>(null);
-  /** 병합된 시청 구간 (서버 initial + 클라이언트 캡처) */
   const watchedIntervalsRef = useRef<WatchedInterval[]>(mergeIntervals(normalizeIntervals(initialWatchedIntervals)));
-  /** 현재 재생 중인 구간 시작 시각(초) */
   const segmentStartRef = useRef(initialPosition);
-  /** 구간 녹화 중 여부 */
   const segmentOpenRef = useRef(false);
-  /** is_completed는 한 번 true면 클라이언트에서도 유지 */
-  const isCompletedRef = useRef(initiallyCompleted);
+  const isCompletedRef = useRef(savedProgressRef.current >= COMPLETE_THRESHOLD_PERCENT);
   const preventSkipRef = useRef(preventSkip);
-
-  useEffect(() => {
-    if (initiallyCompleted) {
-      isCompletedRef.current = true;
-      lastSavedPercentRef.current = 100;
-      setProgressPercent(100);
-      showCompleteOverlayRef.current = true;
-      setShowEndedOverlay(true);
-    }
-  }, [initiallyCompleted]);
-
-  useEffect(() => {
-    isReviewModeRef.current = isReviewMode;
-  }, [isReviewMode]);
 
   useEffect(() => {
     preventSkipRef.current = preventSkip;
   }, [preventSkip]);
 
-  const effectivePreventSkip = isReviewMode ? false : preventSkip;
-
-  /** ref 기반 — iframe 이벤트 핸들러에서 stale closure 없이 누적 진도율 계산 */
   const getAccumulatedPercent = (duration: number): number => {
     if (!Number.isFinite(duration) || duration <= 0) return 0;
     const intervals = watchedIntervalsRef.current;
@@ -242,16 +200,10 @@ export default function YoutubePlayer({
           : null;
       return percentFromIntervals(intervals, duration, openSeg);
     }
-    const skipLocked = isReviewModeRef.current ? false : preventSkipRef.current;
-    if (skipLocked) {
+    if (preventSkipRef.current) {
       return (maxWatchedRef.current / duration) * 100;
     }
     return 0;
-  };
-
-  const isAccumulatedProgressComplete = (duration: number): boolean => {
-    if (isCompletedRef.current) return true;
-    return getAccumulatedPercent(duration) >= COMPLETE_THRESHOLD_PERCENT;
   };
 
   useEffect(() => {
@@ -381,7 +333,7 @@ export default function YoutubePlayer({
             : mergedIntervals;
         const calculatedPercent = percentFromIntervals(intervalsToSend, duration);
         const progressPercent = isCompletedRef.current
-          ? 100
+          ? Math.max(savedProgressRef.current, 100)
           : Math.min(100, Math.max(0, Math.round(calculatedPercent * 100) / 100));
         if (!Number.isFinite(progressPercent)) return;
 
@@ -389,7 +341,7 @@ export default function YoutubePlayer({
           isCompletedRef.current || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
         if (newCompleted) isCompletedRef.current = true;
 
-        const payload = {
+        await postProgress({
           assignmentId: assignmentId as string,
           watched_intervals: intervalsToSend,
           duration_sec: duration,
@@ -397,52 +349,27 @@ export default function YoutubePlayer({
           is_completed: newCompleted,
           last_position: lastPositionSeconds,
           last_watched_at: now,
-          isReviewMode: isReviewModeRef.current,
-        };
-        progressDebug("[progress-debug] saveProgress (interval path)", {
-          completed,
-          duration,
-          openSeg,
-          watchedIntervalsRef: [...watchedIntervalsRef.current],
-          intervalsToSend,
-          calculatedPercent,
-          clientProgressPercent: progressPercent,
-          payload,
         });
-
-        await postProgress(payload);
         return;
       }
 
-      // legacy path (watched_intervals 비어 있을 때)
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
       if (percent === 0 && lastPositionSeconds === 0 && !completed) return;
 
       const progressPercent = isCompletedRef.current
-        ? 100
+        ? Math.max(savedProgressRef.current, 100)
         : Math.min(100, Math.round(percent * 100) / 100);
       const newCompleted =
         isCompletedRef.current || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
       if (newCompleted) isCompletedRef.current = true;
 
-      const legacyPayload = {
+      await postProgress({
         assignmentId: assignmentId as string,
         progress_percent: progressPercent,
         is_completed: newCompleted,
         last_position: lastPositionSeconds,
         last_watched_at: now,
-        isReviewMode: isReviewModeRef.current,
-      };
-      progressDebug("[progress-debug] saveProgress (legacy path)", {
-        completed,
-        percent,
-        duration: durationRef.current,
-        watchedIntervalsRef: [...watchedIntervalsRef.current],
-        clientProgressPercent: progressPercent,
-        payload: legacyPayload,
       });
-
-      await postProgress(legacyPayload);
     },
     [assignmentId, getOpenSegment, postProgress]
   );
@@ -452,57 +379,10 @@ export default function YoutubePlayer({
     saveProgressRef.current = saveProgress;
   }, [saveProgress]);
 
-  const handleStartReview = useCallback(() => {
-    showCompleteOverlayRef.current = false;
-    reviewRestartingRef.current = true;
-    setReviewPlaybackActive(false);
-    setIsReviewMode(true);
-    isReviewModeRef.current = true;
-    setShowEndedOverlay(false);
-    lastCurrentRef.current = 0;
-    lastPlayingPositionRef.current = 0;
-    lastSaveVideoPositionRef.current = 0;
-    maxWatchedRef.current = 0;
-    segmentOpenRef.current = false;
-    openSegment(0);
-    try {
-      const p = playerRef.current;
-      if (p) {
-        // ENDED 상태에서 seekTo(0)+playVideo()가 무시되는 경우(짧은 영상 등) 대비
-        try {
-          p.pauseVideo();
-        } catch {
-          // ignore
-        }
-        p.seekTo(0, true);
-        window.setTimeout(() => {
-          try {
-            playerRef.current?.playVideo();
-          } catch {
-            // ignore
-          }
-        }, 200);
-        window.setTimeout(() => {
-          reviewRestartingRef.current = false;
-        }, 2500);
-      } else {
-        reviewRestartingRef.current = false;
-      }
-    } catch {
-      reviewRestartingRef.current = false;
-    }
-    try {
-      onReviewSessionStart?.();
-    } catch {
-      // ignore
-    }
-  }, [openSegment, onReviewSessionStart]);
-
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  /** 스킵 허용 시: 시청 구간(몇 분~몇 분) 저장 — 관리자 상세에서 확인용 */
   const sendWatchSegment = useCallback(
     async (startSec: number, endSec: number) => {
       if (!supabase || !assignmentId?.trim()) return;
@@ -536,7 +416,7 @@ export default function YoutubePlayer({
             }),
           });
         }
-      } catch (_: unknown) {
+      } catch {
         // ignore
       }
     },
@@ -566,7 +446,7 @@ export default function YoutubePlayer({
             rel: 0,
             iv_load_policy: 3,
             playsinline: 1,
-            fs: 0, /* 전체 화면 버튼 비활성화 (와이드 뷰로 대체) */
+            fs: 0,
             start: Math.floor(initialPosition),
           },
           events: {
@@ -580,13 +460,6 @@ export default function YoutubePlayer({
               } catch {
                 // ignore
               }
-              if (initiallyCompleted && !isReviewModeRef.current) {
-                try {
-                  p.pauseVideo();
-                } catch {
-                  // ignore
-                }
-              }
               setReady(true);
             },
             onStateChange: (e: { data: number }) => {
@@ -599,58 +472,19 @@ export default function YoutubePlayer({
                   if (Number.isFinite(endSec)) finalizeSegment(endSec);
                 }
 
-                if (e.data === 1 && isReviewModeRef.current) {
-                  reviewRestartingRef.current = false;
-                  showCompleteOverlayRef.current = false;
-                  setReviewPlaybackActive(true);
-                  setShowEndedOverlay(false);
-                }
-
                 if (e.data === 0) {
-                  if (reviewRestartingRef.current) {
-                    progressDebug("[progress-debug] ENDED ignored (review restart)");
-                    return;
-                  }
-                  if (isReviewModeRef.current) {
-                    setReviewPlaybackActive(false);
-                  }
                   const d = p.getDuration() || durationRef.current;
                   if (d > 0) durationRef.current = d;
                   const accumulated = d > 0 ? getAccumulatedPercent(d) : 0;
-                  const shouldShowCompleteOverlay = isReviewModeRef.current
-                    ? true
-                    : isAccumulatedProgressComplete(d);
-
-                  if (shouldShowCompleteOverlay) {
-                    showCompleteOverlayRef.current = true;
-                    setShowEndedOverlay(true);
-                  }
-
-                  if (
-                    shouldShowCompleteOverlay &&
-                    !isReviewModeRef.current &&
-                    d > 0 &&
-                    accumulated >= COMPLETE_THRESHOLD_PERCENT
-                  ) {
+                  if (accumulated >= COMPLETE_THRESHOLD_PERCENT) {
                     isCompletedRef.current = true;
                     setProgressPercent(Math.min(100, accumulated));
-                    const skipLocked = isReviewModeRef.current ? false : preventSkipRef.current;
-                    const lastPos = skipLocked
+                    const lastPos = preventSkipRef.current
                       ? maxWatchedRef.current
                       : lastPlayingPositionRef.current;
                     void saveProgressRef.current(accumulated, true, lastPos);
                   }
-
-                  progressDebug("[progress-debug] ENDED", {
-                    currentTime: p.getCurrentTime(),
-                    lastPlayingPosition: lastPlayingPositionRef.current,
-                    getDuration: d,
-                    accumulatedPercent: accumulated,
-                    showOverlay: shouldShowCompleteOverlay,
-                    watchedIntervalsRef: [...watchedIntervalsRef.current],
-                  });
                 }
-                // PAUSED/BUFFERING 등으로 오버레이를 숨기지 않음 — hover·일시정지 시 버튼 사라짐 방지
 
                 const r = p.getPlaybackRate();
                 if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
@@ -672,7 +506,6 @@ export default function YoutubePlayer({
       if (player?.destroy) player.destroy();
       playerRef.current = null;
       setReady(false);
-      setShowEndedOverlay(false);
     };
   }, [isClient, videoId, initialPosition, finalizeSegment]);
 
@@ -695,7 +528,6 @@ export default function YoutubePlayer({
     };
   }, []);
 
-  /** 배속 1.4x 초과 시 막기: 단일 인터벌로 체크. 와이드 뷰/가로 모드에서도 레이아웃과 무관하게 동작함. */
   useEffect(() => {
     if (!ready) return;
 
@@ -711,7 +543,7 @@ export default function YoutubePlayer({
         } else {
           lastKnownRateRef.current = rate;
         }
-      } catch (_: unknown) {
+      } catch {
         // ignore
       }
     };
@@ -720,7 +552,6 @@ export default function YoutubePlayer({
     return () => clearInterval(interval);
   }, [ready, showRateToast]);
 
-  /** 다른 탭일 때 진도 카운트/저장 중단, 복귀 시 배경 재생분 미적용 */
   useEffect(() => {
     if (typeof document === "undefined") return;
     const onVisibilityChange = () => {
@@ -745,7 +576,6 @@ export default function YoutubePlayer({
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [finalizeSegment]);
 
-  /** 탭 닫기/이동 시 현재 재생 위치 저장 → 다음에 유튜브처럼 마지막 시청 위치부터 재생 */
   useEffect(() => {
     if (typeof window === "undefined" || !assignmentId) return;
     const flushProgress = (keepalive: boolean) => {
@@ -757,9 +587,9 @@ export default function YoutubePlayer({
         if (!Number.isFinite(duration) || duration <= 0) return;
         const current = p.getCurrentTime();
         if (segmentOpenRef.current && Number.isFinite(current)) finalizeSegment(current);
-        const lastPos = effectivePreventSkip ? maxWatchedRef.current : current;
+        const lastPos = preventSkipRef.current ? maxWatchedRef.current : current;
         const progressPercent = isCompletedRef.current
-          ? 100
+          ? Math.max(savedProgressRef.current, 100)
           : computePercent(duration);
         const newCompleted =
           isCompletedRef.current || progressPercent >= COMPLETE_THRESHOLD_PERCENT;
@@ -773,19 +603,14 @@ export default function YoutubePlayer({
           last_position: lastPos,
           last_watched_at: new Date().toISOString(),
           is_completed: newCompleted,
-          isReviewMode: isReviewModeRef.current,
         };
 
         if (useIntervalPath) {
           body.watched_intervals = mergedIntervals;
           body.duration_sec = duration;
-          body.progress_percent = isCompletedRef.current
-            ? 100
-            : Math.min(100, Math.round(progressPercent * 100) / 100);
+          body.progress_percent = Math.min(100, Math.round(progressPercent * 100) / 100);
         } else {
-          body.progress_percent = isCompletedRef.current
-            ? 100
-            : Math.min(100, Math.round(progressPercent * 100) / 100);
+          body.progress_percent = Math.min(100, Math.round(progressPercent * 100) / 100);
         }
 
         fetch("/api/progress", {
@@ -808,7 +633,7 @@ export default function YoutubePlayer({
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [assignmentId, effectivePreventSkip, computePercent, finalizeSegment]);
+  }, [assignmentId, computePercent, finalizeSegment]);
 
   useEffect(() => {
     if (!ready || !assignmentId) return;
@@ -846,7 +671,7 @@ export default function YoutubePlayer({
           return;
         }
 
-        const skipLocked = !isReviewModeRef.current && preventSkipRef.current;
+        const skipLocked = preventSkipRef.current;
         if (skipLocked) {
           const jumpForward = current - prevCurrent > 1.5;
           const aheadOfMax = current > maxWatchedRef.current + SKIP_TOLERANCE_SEC;
@@ -877,21 +702,21 @@ export default function YoutubePlayer({
 
         const percentValue = computePercent(duration);
         if (!Number.isFinite(percentValue) || percentValue < 0 || percentValue > 100) return;
-        const displayPercent = isCompletedRef.current ? 100 : percentValue;
-        setProgressPercent(displayPercent);
+        savedProgressRef.current = Math.max(savedProgressRef.current, percentValue);
+        setProgressPercent(Math.min(100, savedProgressRef.current));
 
-        if (!isReviewModeRef.current && !hasFiredFirstProgressRef.current && percentValue >= FIRST_PROGRESS_THRESHOLD) {
+        if (!hasFiredFirstProgressRef.current && percentValue >= FIRST_PROGRESS_THRESHOLD) {
           hasFiredFirstProgressRef.current = true;
           try {
             onFirstProgress?.();
           } catch {
-            // 콜백 예외는 플레이어 동작에 영향 주지 않음
+            // ignore
           }
         }
 
         const lastPos = skipLocked ? maxWatchedRef.current : current;
 
-        if (percentValue >= COMPLETE_THRESHOLD_PERCENT && !isReviewModeRef.current) {
+        if (percentValue >= COMPLETE_THRESHOLD_PERCENT) {
           if (!skipLocked && current > lastSaveVideoPositionRef.current) {
             const segmentDuration = current - lastSaveVideoPositionRef.current;
             if (segmentDuration <= 6) {
@@ -901,12 +726,8 @@ export default function YoutubePlayer({
           }
           finalizeSegment(current);
           isCompletedRef.current = true;
-          if (!isReviewModeRef.current) {
-            showCompleteOverlayRef.current = true;
-            setShowEndedOverlay(true);
-          }
           saveProgress(percentValue, true, lastPos);
-          lastSavedPercentRef.current = 100;
+          lastSavedPercentRef.current = Math.max(lastSavedPercentRef.current, percentValue);
           return;
         }
 
@@ -920,18 +741,13 @@ export default function YoutubePlayer({
             }
             lastSaveVideoPositionRef.current = current;
           }
-          const toSave = isCompletedRef.current
-            ? 100
-            : Math.min(100, Math.round(percentValue * 100) / 100);
-          const shouldSave =
-            isReviewModeRef.current ||
-            (Number.isFinite(toSave) && toSave >= 0 && toSave > lastSavedPercentRef.current);
-          if (shouldSave) {
+          const toSave = Math.min(100, Math.round(percentValue * 100) / 100);
+          if (Number.isFinite(toSave) && toSave >= 0 && toSave > lastSavedPercentRef.current) {
             saveProgress(toSave, false, lastPos);
-            if (toSave > lastSavedPercentRef.current) lastSavedPercentRef.current = toSave;
+            lastSavedPercentRef.current = toSave;
           }
         }
-      } catch (_err: unknown) {
+      } catch {
         // ignore
       }
     }, 500);
@@ -942,7 +758,7 @@ export default function YoutubePlayer({
         progressIntervalRef.current = null;
       }
     };
-  }, [ready, assignmentId, saveProgress, sendWatchSegment, effectivePreventSkip, computePercent, detectSeekBreak, finalizeSegment, openSegment, onFirstProgress]);
+  }, [ready, assignmentId, saveProgress, sendWatchSegment, computePercent, detectSeekBreak, finalizeSegment, openSegment, onFirstProgress]);
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
@@ -971,83 +787,41 @@ export default function YoutubePlayer({
     );
   }
 
-  // 복습 세션 중(isReviewMode)에는 iframe 클릭·탐색을 항상 허용; 오버레이는 재생 중에만 숨김
-  const completeOverlayVisible =
-    showEndedOverlay && !(isReviewMode && reviewPlaybackActive);
-  const blockIframePointerEvents = showEndedOverlay && !isReviewMode;
-
   return (
     <>
       <div className="relative aspect-video overflow-hidden rounded-xl bg-black shadow-2xl">
         <div
           ref={containerRef}
-          className={`absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full${
-            blockIframePointerEvents ? " pointer-events-none" : ""
-          }`}
+          className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
-        {/* 상단 제목·로고 영역 클릭 시 유튜브로 이동 방지 (복습 모드에서는 해제) */}
         <div
-          className={`absolute left-0 right-0 top-0 z-10 h-12 cursor-default${
-            isReviewMode ? " pointer-events-none" : ""
-          }`}
+          className="absolute left-0 right-0 top-0 z-10 h-12 cursor-default"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
-        {/* 우하단: 유튜브 버튼·학원 로고 클릭 차단 (복습 모드에서는 해제) */}
         <div
-          className={`absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default${
-            isReviewMode ? " pointer-events-none" : ""
-          }`}
+          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
-        <div className={`absolute bottom-0 left-0 right-0 h-1 bg-zinc-700${isReviewMode ? " pointer-events-none" : ""}`}>
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
             style={{ width: `${Math.min(100, progressPercent)}%` }}
           />
         </div>
         {toastMessage && (
-            <div
-              role="alert"
-              className="absolute bottom-4 left-4 right-4 z-10 rounded-lg bg-slate-900/95 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:min-w-[280px] sm:-translate-x-1/2"
-            >
-              {toastMessage}
-            </div>
-        )}
-        {/* 영상 종료 시 추천 영상 클릭 방지: 전체 플레이어를 덮어 클릭 불가 */}
-        {completeOverlayVisible && (
           <div
-            className="absolute inset-0 z-50 flex cursor-default flex-col items-center justify-center gap-4 bg-black/60 px-4 backdrop-blur-[1px]"
-            title="영상 시청이 완료되었습니다"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+            role="alert"
+            className="absolute bottom-4 left-4 right-4 z-10 rounded-lg bg-slate-900/95 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:min-w-[280px] sm:-translate-x-1/2"
           >
-            <p className="rounded-lg bg-slate-900/90 px-4 py-2 text-center text-sm font-medium text-white">
-              영상 시청이 완료되었습니다
-            </p>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleStartReview();
-              }}
-              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-black/60"
-            >
-              {isReviewMode ? "다시 복습하기" : "복습하기"}
-            </button>
+            {toastMessage}
           </div>
         )}
       </div>
       <p className="watch-player-hint mt-2 text-center text-xs text-zinc-500">
-        {isReviewMode ? (
-          <>복습 모드 — 구간 이동이 자유롭습니다. 학습 시간은 계속 기록됩니다.</>
-        ) : (
-          <>
-            재생이 안 되면 이 페이지에서 시청해 주세요.
-            <span className="text-amber-600"> (YouTube에서 보시면 진도가 저장되지 않습니다)</span>
-          </>
-        )}
+        재생이 안 되면 이 페이지에서 시청해 주세요.
+        <span className="text-amber-600"> (YouTube에서 보시면 진도가 저장되지 않습니다)</span>
       </p>
     </>
   );

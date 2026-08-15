@@ -6,7 +6,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { ASSIGNMENT_SELECT_WATCH, ASSIGNMENT_SELECT_WATCH_FALLBACK } from "@/lib/assignments";
-import { normalizeIntervals, type WatchedInterval, isWatchComplete } from "@/lib/watchIntervals";
+import { normalizeIntervals, type WatchedInterval } from "@/lib/watchIntervals";
 import { invalidateStudentAssignmentsCache } from "@/lib/studentAssignmentsCache";
 import YoutubePlayer from "@/components/YoutubePlayer";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -129,23 +129,6 @@ export default function WatchPage() {
       recordedAssignmentIdsRef.current.delete(id);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = setTimeout(() => setStartedAtToast(null), 5000);
-    }
-  }, [assignmentId, accessToken]);
-
-  const handleReviewSessionStart = useCallback(async () => {
-    const id = assignmentId as string | null;
-    if (!id || !accessToken) return;
-    try {
-      await fetch("/api/watch-start", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ assignmentId: id }),
-      });
-    } catch {
-      // ignore
     }
   }, [assignmentId, accessToken]);
 
@@ -281,18 +264,15 @@ export default function WatchPage() {
               assignmentId={assignment.id as string}
               initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
               initialWatchedIntervals={initialWatchedIntervals}
-              preventSkip={assignment.prevent_skip !== false}
-              initiallyCompleted={isWatchComplete(assignment.progress_percent, assignment.is_completed)}
+              initialProgressPercent={assignment.progress_percent ?? 0}
+              preventSkip={false}
               onFirstProgress={handleRecordStartedAt}
-              onReviewSessionStart={handleReviewSessionStart}
             />
           </div>
         </div>
         <div className="watch-footer border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            {isWatchComplete(assignment.progress_percent, assignment.is_completed)
-              ? "완료된 영상입니다. 플레이어에서 「복습하기」를 누르면 구간 이동이 자유로운 복습 모드로 다시 시청할 수 있습니다."
-              : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 영상을 끝까지 시청하면 완료 처리됩니다.`}
+            저장된 진도: {(assignment.progress_percent ?? 0).toFixed(1)}% · 시청한 구간만 진도에 반영됩니다.
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
             재생 배속은 1.4배속까지만 지원됩니다. 가로 모드로 보시면 와이드 뷰가 적용됩니다.
