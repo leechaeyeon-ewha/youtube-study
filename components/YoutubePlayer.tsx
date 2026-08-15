@@ -606,10 +606,6 @@ export default function YoutubePlayer({
                   setShowEndedOverlay(false);
                 }
 
-                if (e.data === 2 && isReviewModeRef.current) {
-                  setReviewPlaybackActive(false);
-                }
-
                 if (e.data === 0) {
                   if (reviewRestartingRef.current) {
                     progressDebug("[progress-debug] ENDED ignored (review restart)");
@@ -975,8 +971,10 @@ export default function YoutubePlayer({
     );
   }
 
+  // 복습 세션 중(isReviewMode)에는 iframe 클릭·탐색을 항상 허용; 오버레이는 재생 중에만 숨김
   const completeOverlayVisible =
-    showEndedOverlay && !reviewPlaybackActive;
+    showEndedOverlay && !(isReviewMode && reviewPlaybackActive);
+  const blockIframePointerEvents = showEndedOverlay && !isReviewMode;
 
   return (
     <>
@@ -984,7 +982,7 @@ export default function YoutubePlayer({
         <div
           ref={containerRef}
           className={`absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full${
-            completeOverlayVisible ? " pointer-events-none" : ""
+            blockIframePointerEvents ? " pointer-events-none" : ""
           }`}
         />
         {/* 상단 제목·로고 영역 클릭 시 유튜브로 이동 방지 (복습 모드에서는 해제) */}
@@ -1003,7 +1001,7 @@ export default function YoutubePlayer({
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
+        <div className={`absolute bottom-0 left-0 right-0 h-1 bg-zinc-700${isReviewMode ? " pointer-events-none" : ""}`}>
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
             style={{ width: `${Math.min(100, progressPercent)}%` }}

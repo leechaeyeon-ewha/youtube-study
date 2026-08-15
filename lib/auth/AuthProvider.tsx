@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
@@ -9,6 +9,25 @@ import { setAuthSync } from "@/lib/auth/accessTokenStore";
 import { AuthContext, type AuthContextValue } from "@/lib/auth/useAuth";
 
 const LOGIN_PROFILE_SEED_KEY = "youtube_study_auth_me_cache";
+
+function clearAuthClientStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(LOGIN_PROFILE_SEED_KEY);
+  } catch {
+    // ignore
+  }
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("sb-") && key.includes("auth-token")) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function readLoginProfileSeed(): Profile | null {
   if (typeof window === "undefined") return null;
@@ -37,6 +56,7 @@ export function AuthProvider({
   resolveWrongRoleRedirect,
 }: AuthProviderProps) {
   const router = useRouter();
+  const logoutOnceRef = useRef(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -92,6 +112,19 @@ export function AuthProvider({
     [allowedRoles, applySession, fetchProfile, resolveWrongRoleRedirect, router]
   );
 
+  const finishLogout = useCallback(() => {
+    if (logoutOnceRef.current) return;
+    logoutOnceRef.current = true;
+    clearAuthClientStorage();
+    applySession(null, null, null);
+    setIsReady(false);
+    if (typeof window !== "undefined") {
+      window.location.replace("/login");
+      return;
+    }
+    router.replace("/login");
+  }, [applySession, router]);
+
   useEffect(() => {
     if (!supabase) {
       setIsReady(true);
@@ -125,8 +158,7 @@ export function AuthProvider({
       if (cancelled) return;
 
       if (event === "SIGNED_OUT") {
-        applySession(null, null, null);
-        router.replace("/login");
+        finishLogout();
         return;
       }
 
@@ -150,13 +182,15 @@ export function AuthProvider({
   }, []);
 
   const signOut = useCallback(async () => {
-    if (supabase) {
-      await supabase.auth.signOut();
+    try {
+      if (supabase) {
+        await supabase.auth.signOut({ scope: "local" });
+      }
+    } catch {
+      // 네트워크 오류 등 — 로컬 세션은 finishLogout에서 정리
     }
-    applySession(null, null, null);
-    router.replace("/login");
-    router.refresh();
-  }, [applySession, router]);
+    finishLogout();
+  }, [finishLogout]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
