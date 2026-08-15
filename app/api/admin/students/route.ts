@@ -28,7 +28,40 @@ export async function GET(req: Request) {
       { status: 500 }
     );
   }
+
+  const scope = new URL(req.url).searchParams.get("scope");
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  if (scope === "assign") {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, grade, class_id, enrollment_status, teacher_id")
+      .eq("role", "student")
+      .order("full_name");
+
+    if (error) {
+      const fallback = await supabase
+        .from("profiles")
+        .select("id, full_name, email, grade, class_id, teacher_id")
+        .eq("role", "student")
+        .order("full_name");
+      if (fallback.error) {
+        return NextResponse.json({ error: fallback.error.message }, { status: 500 });
+      }
+      const rows = (fallback.data ?? []).map((row) => ({
+        ...row,
+        enrollment_status: "enrolled" as const,
+      }));
+      return NextResponse.json(rows);
+    }
+
+    return NextResponse.json(
+      (data ?? []).map((row) => ({
+        ...row,
+        enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
+      }))
+    );
+  }
 
   // grade, teacher_id 컬럼은 선택적이므로 없을 때도 동작하도록
   const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
