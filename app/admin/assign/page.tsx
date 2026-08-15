@@ -56,28 +56,39 @@ interface ClassRow {
   title: string;
 }
 
+interface AssignSummaryEntry {
+  total: number;
+  completed: number;
+  priority: number;
+}
+
 const ASSIGN_CACHE_TTL_MS = 30 * 1000;
 let assignPageCache: {
-  assignments: AssignmentRow[];
   students: StudentSummary[];
+  teachers: TeacherRow[];
   classes: ClassRow[];
+  assignSummaryByUser: Record<string, AssignSummaryEntry>;
   at: number;
 } | null = null;
 
 export default function AdminAssignPage() {
   const [mounted, setMounted] = useState(false);
-  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   /** 학생별 진도/우선 필터: 전체 | 완료 | 미완료 | 우선 학습 */
   const [progressFilterByStudent, setProgressFilterByStudent] = useState<Record<string, "all" | "completed" | "incomplete" | "priority">>({});
   /** 학생별 배정 영상에서 펼친 재생목록: studentId -> courseKey (null이면 재생목록 목록 보기) */
   const [expandedPlaylistByStudent, setExpandedPlaylistByStudent] = useState<Record<string, string | null>>({});
-  /** 학생 요약 정보 (이름/이메일) — /api/admin/students 기반 */
+  /** 학생 요약 정보 (이름/이메일) — /api/admin/students?scope=assign */
   const [students, setStudents] = useState<StudentSummary[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   /** 반 목록 (id -> title 매핑용) */
   const [classes, setClasses] = useState<ClassRow[]>([]);
+  /** 학생별 배정 집계 (초기 로드) */
+  const [assignSummaryByUser, setAssignSummaryByUser] = useState<Record<string, AssignSummaryEntry>>({});
+  /** 펼침 시 lazy 로드된 학생별 배정 상세 (클라이언트 캐시) */
+  const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, AssignmentRow[]>>({});
+  const [assignmentsLoadingByUser, setAssignmentsLoadingByUser] = useState<Record<string, boolean>>({});
   /** 학생별 다중 선택된 배정 ID 목록 */
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
   /** 학생 목록 정렬: 기본(배정 순) | 학년별 | 반별 */
@@ -194,7 +205,43 @@ export default function AdminAssignPage() {
     await revalidateStudentPathsWithRetry(session.access_token, assignmentIds ?? []);
   }
 
-  async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean | undefined) {
+  /** 배정 변경 후 summary 갱신 + 해당 학생 상세 캐시 무효화 */
+  async function refreshAfterAssignmentMutation(userId: string, assignmentIds?: string[]) {
+    assignPageCache = null;
+    setAssignmentsByUser((prev) => {
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
+    if (assignmentIds?.length) await revalidateStudentPaths(assignmentIds);
+    await load();
+    if (expandedStudentId === userId) {
+      await fetchAssignmentsForUser(userId, true);
+    }
+  }
+
+  async function fetchAssignmentsForUser(userId: string, force = false) {
+    if (!force && assignmentsByUser[userId]) return;
+    if (!supabase) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+    setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: true }));
+    try {
+      const res = await fetch(`/api/admin/assignments?userId=${encodeURIComponent(userId)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      const data = res.ok ? await res.json() : [];
+      setAssignmentsByUser((prev) => ({
+        ...prev,
+        [userId]: Array.isArray(data) ? (data as AssignmentRow[]) : [],
+      }));
+    } finally {
+      setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: false }));
+    }
+  }
+
+  async function handleTogglePreventSkip(assignmentId: string, userId: string, currentPreventSkip: boolean | undefined) {
     if (!supabase) return;
     setSkipToggleAssignmentId(assignmentId);
     try {
@@ -207,14 +254,13 @@ export default function AdminAssignPage() {
         return;
       }
       assignPageCache = null;
-      revalidateStudentPaths([assignmentId]);
-      await load();
+      await refreshAfterAssignmentMutation(userId, [assignmentId]);
     } finally {
       setSkipToggleAssignmentId(null);
     }
   }
 
-  async function handleTogglePriority(assignmentId: string, currentPriority: boolean | undefined) {
+  async function handleTogglePriority(assignmentId: string, userId: string, currentPriority: boolean | undefined) {
     if (!supabase) return;
     setPriorityToggleAssignmentId(assignmentId);
     try {
@@ -227,8 +273,7 @@ export default function AdminAssignPage() {
         return;
       }
       assignPageCache = null;
-      revalidateStudentPaths([assignmentId]);
-      await load();
+      await refreshAfterAssignmentMutation(userId, [assignmentId]);
     } finally {
       setPriorityToggleAssignmentId(null);
     }
@@ -241,9 +286,10 @@ export default function AdminAssignPage() {
     }
     const now = Date.now();
     if (assignPageCache && now - assignPageCache.at < ASSIGN_CACHE_TTL_MS) {
-      setAssignments(assignPageCache.assignments);
       setStudents(assignPageCache.students);
+      setTeachers(assignPageCache.teachers);
       setClasses(assignPageCache.classes);
+      setAssignSummaryByUser(assignPageCache.assignSummaryByUser);
       setLoading(false);
       return;
     }
@@ -253,14 +299,16 @@ export default function AdminAssignPage() {
       ? { Authorization: `Bearer ${session.access_token}` }
       : {};
 
-    const [studentsRes, teachersRes, assignmentsRes, classesRes] = await Promise.all([
-      fetch("/api/admin/students", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+    const [studentsRes, teachersRes, summaryRes, classesRes] = await Promise.all([
+      fetch("/api/admin/students?scope=assign", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/admin/teachers", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/admin/assignments-list", { headers: authHeaders, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/assign-summary", { headers: authHeaders, cache: "no-store" }).then(async (r) => {
+        if (!r.ok) return {} as Record<string, AssignSummaryEntry>;
+        const json = (await r.json()) as { byUser?: Record<string, AssignSummaryEntry> };
+        return json.byUser ?? {};
+      }),
       supabase.from("classes").select("id, title").order("title"),
     ]);
-
-    const nextAssignments = Array.isArray(assignmentsRes) ? (assignmentsRes as AssignmentRow[]) : [];
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as StudentSummary[]) : [];
     const nextTeachers = Array.isArray(teachersRes) ? (teachersRes as TeacherRow[]) : [];
@@ -268,10 +316,16 @@ export default function AdminAssignPage() {
 
     setStudents(nextStudents);
     setTeachers(nextTeachers);
-    setAssignments(nextAssignments);
     setClasses(nextClasses);
+    setAssignSummaryByUser(summaryRes);
     setLoading(false);
-    assignPageCache = { assignments: nextAssignments, students: nextStudents, classes: nextClasses, at: Date.now() };
+    assignPageCache = {
+      students: nextStudents,
+      teachers: nextTeachers,
+      classes: nextClasses,
+      assignSummaryByUser: summaryRes,
+      at: Date.now(),
+    };
   }
 
   function toggleSelectAssignment(userId: string, assignmentId: string) {
@@ -290,24 +344,20 @@ export default function AdminAssignPage() {
     if (!confirm(`선택한 ${ids.length}개의 배정을 해제할까요?`)) return;
     await supabase.from("assignments").delete().in("id", ids);
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
-    assignPageCache = null;
-    revalidateStudentPaths(ids);
-    await load();
+    await refreshAfterAssignmentMutation(userId, ids);
   }
 
   /** 이 학생의 배정 전체 해제 (재생목록 목록 화면용) */
   async function handleUnassignAllForStudent(userId: string) {
     if (!supabase) return;
-    const list = assignments.filter((a) => a.user_id === userId);
+    const list = assignmentsByUser[userId] ?? [];
     if (list.length === 0) return;
     if (!confirm(`이 학생의 배정 ${list.length}개를 모두 해제할까요?`)) return;
     const ids = list.map((a) => a.id);
     await supabase.from("assignments").delete().in("id", ids);
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
-    assignPageCache = null;
-    revalidateStudentPaths(ids);
-    await load();
+    await refreshAfterAssignmentMutation(userId, ids);
   }
 
   /** 현재 재생목록의 배정 전체 해제 (재생목록 안 화면용) */
@@ -317,9 +367,7 @@ export default function AdminAssignPage() {
     if (!confirm(`이 재생목록의 배정 ${assignmentIds.length}개를 모두 해제할까요?`)) return;
     await supabase.from("assignments").delete().in("id", assignmentIds);
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
-    assignPageCache = null;
-    revalidateStudentPaths(assignmentIds);
-    await load();
+    await refreshAfterAssignmentMutation(userId, assignmentIds);
   }
 
   /** 현재 화면의 배정 전체 선택 / 전체 해제 토글 */
@@ -358,13 +406,11 @@ export default function AdminAssignPage() {
     );
   }
 
-  async function handleUnassign(id: string) {
+  async function handleUnassign(id: string, userId: string) {
     if (!supabase) return;
     if (!confirm("이 배정을 해제할까요?")) return;
     await supabase.from("assignments").delete().eq("id", id);
-    assignPageCache = null;
-    revalidateStudentPaths([id]);
-    await load();
+    await refreshAfterAssignmentMutation(userId, [id]);
   }
 
   return (
@@ -384,11 +430,18 @@ export default function AdminAssignPage() {
           학생 정렬(기본/학년별/반별) 후 재생목록별로 진도 확인, 상세 보기, 우선 학습·스킵 방지 설정 및 배정 해제를 할 수 있습니다.
         </p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          {assignments.length === 0 ? (
-            <div className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
-              배정된 학습이 없습니다.
-            </div>
-          ) : (
+          {(() => {
+            const enrolledStudents = students.filter(
+              (s) => (s.enrollment_status ?? "enrolled") === "enrolled"
+            );
+            if (enrolledStudents.length === 0) {
+              return (
+                <div className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
+                  학생이 없습니다.
+                </div>
+              );
+            }
+            return (
             <>
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-zinc-700">
                 <input
@@ -435,19 +488,14 @@ export default function AdminAssignPage() {
               </div>
               <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
               {(() => {
-                const byStudent = new Map<string, AssignmentRow[]>();
-                for (const a of assignments) {
-                  const list = byStudent.get(a.user_id) ?? [];
-                  list.push(a);
-                  byStudent.set(a.user_id, list);
-                }
+                const byStudent = assignmentsByUser;
                 // 대시보드와 동일하게 재원생만 표시 (배정 유무와 관계없이 전체 학생 수 일치)
                 const enrolledStudents = students.filter(
                   (s) => (s.enrollment_status ?? "enrolled") === "enrolled"
                 );
                 const entries: [string, AssignmentRow[]][] = enrolledStudents.map((s) => [
                   s.id,
-                  byStudent.get(s.id) ?? [],
+                  byStudent[s.id] ?? [],
                 ]);
                 const gradeOrder = ["중1", "중2", "중3", "고1", "고2", "고3"] as const;
                 const gradeRank: Record<string, number> = gradeOrder.reduce(
@@ -499,6 +547,8 @@ export default function AdminAssignPage() {
                 }
                 return entriesToShow.map(([userId, list]) => {
                   const student = students.find((s) => s.id === userId);
+                  const summary = assignSummaryByUser[userId];
+                  const assignmentCount = summary?.total ?? list.length;
                   const studentName = student?.full_name || student?.email || userId.slice(0, 8);
                   const teacherName = student?.teacher_id ? teachers.find((t) => t.id === student.teacher_id)?.full_name : null;
                   const gradeLabel = student?.grade ?? null;
@@ -525,17 +575,32 @@ export default function AdminAssignPage() {
                           </span>
                         )}
                         <span className="text-sm text-slate-500 dark:text-slate-400">
-                          배정 영상 {list.length}개
+                          배정 영상 {assignmentCount}개
                         </span>
                         <button
                           type="button"
-                          onClick={() => setExpandedStudentId(isExpanded ? null : userId)}
+                          onClick={async () => {
+                            if (isExpanded) {
+                              setExpandedStudentId(null);
+                              return;
+                            }
+                            setExpandedStudentId(userId);
+                            await fetchAssignmentsForUser(userId);
+                          }}
                           className="rounded-lg bg-indigo-100 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
                         >
                           {isExpanded ? "접기" : "배정된 영상 보기"}
                         </button>
                       </div>
                       {isExpanded && (() => {
+                        if (assignmentsLoadingByUser[userId]) {
+                          return (
+                            <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-8 text-center dark:border-zinc-700 dark:bg-zinc-800/30">
+                              <LoadingSpinner />
+                              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">배정 목록 불러오는 중…</p>
+                            </div>
+                          );
+                        }
                         const filter = progressFilterByStudent[userId] ?? "all";
                         const filteredList =
                           filter === "completed"
@@ -901,7 +966,7 @@ export default function AdminAssignPage() {
                                                 role="switch"
                                                 aria-checked={!!a.is_priority}
                                                 disabled={priorityToggleAssignmentId === a.id}
-                                                onClick={() => handleTogglePriority(a.id, a.is_priority)}
+                                                onClick={() => handleTogglePriority(a.id, userId, a.is_priority)}
                                                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
                                                   a.is_priority ? "bg-indigo-600" : "bg-slate-200 dark:bg-zinc-600"
                                                 }`}
@@ -924,7 +989,7 @@ export default function AdminAssignPage() {
                                                 role="switch"
                                                 aria-checked={!!a.prevent_skip}
                                                 disabled={skipToggleAssignmentId === a.id}
-                                                onClick={() => handleTogglePreventSkip(a.id, a.prevent_skip)}
+                                                onClick={() => handleTogglePreventSkip(a.id, userId, a.prevent_skip)}
                                                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
                                                   a.prevent_skip ? "bg-indigo-600" : "bg-slate-200 dark:bg-zinc-600"
                                                 }`}
@@ -943,7 +1008,7 @@ export default function AdminAssignPage() {
                                           <td className="px-4 py-2.5">
                                             <button
                                               type="button"
-                                              onClick={() => handleUnassign(a.id)}
+                                              onClick={() => handleUnassign(a.id, userId)}
                                               className="text-red-600 hover:underline dark:text-red-400"
                                             >
                                               배정 해제
@@ -976,7 +1041,8 @@ export default function AdminAssignPage() {
               })()}
             </ul>
             </>
-          )}
+            );
+          })()}
         </div>
       </section>
 
