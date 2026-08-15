@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Profile {
@@ -36,6 +37,14 @@ interface LibraryCourseGroup {
   videos: LibraryVideo[];
 }
 
+/** 대시보드 데이터 캐시 (탭 이동 시 즉시 표시, 30초 유효) */
+const TEACHER_DASHBOARD_CACHE_TTL_MS = 30 * 1000;
+let teacherDashboardCache: {
+  students: Profile[];
+  classes: ClassRow[];
+  at: number;
+} | null = null;
+
 export default function TeacherDashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
@@ -63,6 +72,13 @@ export default function TeacherDashboardPage() {
       setLoading(false);
       return;
     }
+    const now = Date.now();
+    if (teacherDashboardCache && now - teacherDashboardCache.at < TEACHER_DASHBOARD_CACHE_TTL_MS) {
+      setStudents(teacherDashboardCache.students);
+      setClasses(teacherDashboardCache.classes);
+      setLoading(false);
+      return;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     const authHeaders: Record<string, string> = session?.access_token
       ? { Authorization: `Bearer ${session.access_token}` }
@@ -72,8 +88,11 @@ export default function TeacherDashboardPage() {
         fetch("/api/teacher/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
         fetch("/api/teacher/classes", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       ]);
-      setStudents(Array.isArray(studentsRes) ? (studentsRes as Profile[]) : []);
-      setClasses(Array.isArray(classesRes) ? (classesRes as ClassRow[]) : []);
+      const nextStudents = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
+      const nextClasses = Array.isArray(classesRes) ? (classesRes as ClassRow[]) : [];
+      setStudents(nextStudents);
+      setClasses(nextClasses);
+      teacherDashboardCache = { students: nextStudents, classes: nextClasses, at: Date.now() };
     } finally {
       setLoading(false);
     }
@@ -85,6 +104,9 @@ export default function TeacherDashboardPage() {
 
   useEffect(() => {
     if (mounted && supabase) load();
+    return () => {
+      teacherDashboardCache = null;
+    };
   }, [mounted]);
 
   async function loadLibrary() {
@@ -152,12 +174,7 @@ export default function TeacherDashboardPage() {
         const resultData = await res.json().catch(() => ({})) as { id?: string; error?: string };
         if (res.ok && resultData.id) {
           inserted += 1;
-          fetch("/api/revalidate-student", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ assignmentIds: [resultData.id] }),
-            cache: "no-store",
-          }).catch(() => {});
+          revalidateStudentPathsInBackground(session.access_token, [resultData.id]);
         } else {
           if (resultData.error?.includes("이미")) skipped += 1;
           else if (resultData.error) setAssignMessage({ type: "error", text: resultData.error });
@@ -167,6 +184,7 @@ export default function TeacherDashboardPage() {
         type: "success",
         text: `재생목록 전체 할당 완료. ${inserted}건 배정${skipped > 0 ? ` (이미 있던 ${skipped}건 제외)` : ""}`,
       });
+      teacherDashboardCache = null;
       load();
     } catch (err: unknown) {
       setAssignMessage({
@@ -196,6 +214,7 @@ export default function TeacherDashboardPage() {
         alert(data.error || "반 변경에 실패했습니다.");
         return;
       }
+      teacherDashboardCache = null;
       await load();
     } finally {
       setUpdatingClassId(null);
@@ -240,7 +259,10 @@ export default function TeacherDashboardPage() {
         },
         body: JSON.stringify({ student_id: studentId, is_report_enabled: !currentEnabled }),
       });
-      if (res.ok) await load();
+      if (res.ok) {
+        teacherDashboardCache = null;
+        await load();
+      }
     } finally {
       setReportToggleUserId(null);
     }
@@ -268,12 +290,7 @@ export default function TeacherDashboardPage() {
       }
       setAssignMessage({ type: "success", text: "영상이 할당되었습니다." });
       if (data.id) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: [data.id] }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, [data.id]);
       }
     } catch {
       setAssignMessage({ type: "error", text: "할당에 실패했습니다." });
@@ -325,6 +342,7 @@ export default function TeacherDashboardPage() {
       setAddMessage({ type: "success", text: `${(data as { full_name?: string }).full_name || name} 학생이 등록되었습니다.` });
       setAddFullName("");
       setAddPassword("");
+      teacherDashboardCache = null;
       load();
     } catch {
       setAddMessage({ type: "error", text: "등록에 실패했습니다." });

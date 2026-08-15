@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { ASSIGNMENT_SELECT_STUDENT_LIST } from "@/lib/assignments";
+import {
+  fetchStudentAssignmentsList,
+  STUDENT_ASSIGNMENTS_CACHE_TTL_MS,
+} from "@/lib/studentAssignmentsCache";
 import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -46,6 +49,9 @@ interface ReportData {
 
 const STANDALONE_PLAYLIST_ID = "standalone";
 const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
+
+/** window focus 재조회 최소 간격 (불필요한 전체 assignments refetch 방지) */
+const ASSIGNMENTS_FOCUS_REFETCH_MS = STUDENT_ASSIGNMENTS_CACHE_TTL_MS;
 
 const AUTH_ME_CACHE_KEY = "youtube_study_auth_me_cache";
 const AUTH_ME_CACHE_TTL_MS = 5000;
@@ -216,6 +222,7 @@ export default function StudentPage() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const reportContentRef = useRef<HTMLDivElement>(null);
+  const lastAssignmentsFetchAtRef = useRef(0);
 
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
@@ -239,7 +246,15 @@ export default function StudentPage() {
     }
 
     let cancelled = false;
-    async function load() {
+    async function load(fromFocus = false) {
+      if (
+        fromFocus &&
+        lastAssignmentsFetchAtRef.current > 0 &&
+        Date.now() - lastAssignmentsFetchAtRef.current < ASSIGNMENTS_FOCUS_REFETCH_MS
+      ) {
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (cancelled) return;
       if (!user) {
@@ -250,48 +265,22 @@ export default function StudentPage() {
 
       const cachedProfile = readStudentAuthCache(user.id);
 
-      if (cachedProfile) {
-        if (cachedProfile.role === "admin") {
-          setLoading(false);
-          router.replace("/admin");
-          return;
-        }
-        applyProfileToState(cachedProfile, setFullName, setProfileEmail, setEmailInput);
-
-        const { data, error: fetchError } = await supabase
-          .from("assignments")
-          .select(ASSIGNMENT_SELECT_STUDENT_LIST)
-          .eq("user_id", user.id);
-
-        if (cancelled) return;
-        if (fetchError) {
-          setError(fetchError.message);
-          setLoading(false);
-          return;
-        }
-        if (data == null) {
-          setError("데이터를 불러오지 못했습니다.");
-          setLoading(false);
-          return;
-        }
-
-        const list = (data ?? []) as AssignmentRow[];
-        const visible = list.filter((a) => a.is_visible !== false);
-        setAssignments(visible);
-        setLoading(false);
-        return;
-      }
-
-      const [profileRes, assignmentsRes] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("full_name, role, email")
-          .eq("id", user.id)
-          .single(),
-        supabase
-          .from("assignments")
-          .select(ASSIGNMENT_SELECT_STUDENT_LIST)
-          .eq("user_id", user.id),
+      const [profileRes, assignmentsResult] = await Promise.all([
+        cachedProfile
+          ? Promise.resolve({
+              data: {
+                full_name: cachedProfile.full_name,
+                role: cachedProfile.role,
+                email: cachedProfile.email,
+              },
+              error: null,
+            })
+          : supabase
+              .from("profiles")
+              .select("full_name, role, email")
+              .eq("id", user.id)
+              .single(),
+        fetchStudentAssignmentsList(supabase, user.id, { force: fromFocus }),
       ]);
 
       if (cancelled) return;
@@ -305,7 +294,7 @@ export default function StudentPage() {
 
       applyProfileToState(profile ?? {}, setFullName, setProfileEmail, setEmailInput);
 
-      const { data, error: fetchError } = assignmentsRes;
+      const { data, error: fetchError } = assignmentsResult;
       if (fetchError) {
         setError(fetchError.message);
         setLoading(false);
@@ -318,14 +307,14 @@ export default function StudentPage() {
       }
 
       const list = (data ?? []) as AssignmentRow[];
-      // 관리자 삭제/숨김(is_visible=false) 처리한 영상은 즉시 제외
       const visible = list.filter((a) => a.is_visible !== false);
       setAssignments(visible);
+      lastAssignmentsFetchAtRef.current = Date.now();
       setLoading(false);
     }
 
-    load();
-    const onFocus = () => { load(); };
+    load(false);
+    const onFocus = () => { load(true); };
     window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { revalidateStudentPaths as revalidateStudentPathsWithRetry } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface AssignmentRow {
@@ -190,19 +191,7 @@ export default function AdminAssignPage() {
     if (!supabase) return;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
-    try {
-      await fetch("/api/revalidate-student", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ assignmentIds: assignmentIds ?? [] }),
-        cache: "no-store",
-      });
-    } catch {
-      // 무시: 학생 쪽은 포커스 시 재조회로 보정됨
-    }
+    await revalidateStudentPathsWithRetry(session.access_token, assignmentIds ?? []);
   }
 
   async function handleTogglePreventSkip(assignmentId: string, currentPreventSkip: boolean | undefined) {

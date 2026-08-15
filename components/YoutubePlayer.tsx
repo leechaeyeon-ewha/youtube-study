@@ -20,6 +20,12 @@ const RATE_TOAST_MESSAGE = "배속은 1.4배속까지만 사용 가능합니다.
 const TOAST_DURATION_MS = 2500;
 const TOAST_COOLDOWN_MS = 8000;
 
+function progressDebug(...args: unknown[]) {
+  if (process.env.NODE_ENV === "development") {
+    console.log(...args);
+  }
+}
+
 declare global {
   interface Window {
     YT?: {
@@ -131,6 +137,7 @@ export default function YoutubePlayer({
   const lastSaveVideoPositionRef = useRef(initialPosition);
   /** 페이지 이탈 시 진도 저장용 (keepalive fetch에서 사용) */
   const lastAuthTokenRef = useRef<string | null>(null);
+  const lastProgressPayloadKeyRef = useRef<string | null>(null);
   /** 병합된 시청 구간 (서버 initial + 클라이언트 캡처) */
   const watchedIntervalsRef = useRef<WatchedInterval[]>(mergeIntervals(normalizeIntervals(initialWatchedIntervals)));
   /** 현재 재생 중인 구간 시작 시각(초) */
@@ -196,27 +203,61 @@ export default function YoutubePlayer({
     return 0;
   }, [getOpenSegment, preventSkip]);
 
+  const getAccessToken = useCallback(async (forceRefresh = false): Promise<string | null> => {
+    if (!forceRefresh && lastAuthTokenRef.current) {
+      return lastAuthTokenRef.current;
+    }
+    if (!supabase) return null;
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? null;
+    lastAuthTokenRef.current = token;
+    return token;
+  }, []);
+
   const postProgress = useCallback(
     async (payload: Record<string, unknown>) => {
       if (!supabase || !assignmentId?.trim()) return;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        lastAuthTokenRef.current = session.access_token;
-        console.log("[progress-debug] POST /api/progress", payload);
-        await fetch("/api/progress", {
+        const payloadKey = JSON.stringify(payload);
+        if (payloadKey === lastProgressPayloadKeyRef.current) {
+          progressDebug("[progress-debug] POST skipped (unchanged payload)");
+          return;
+        }
+
+        let token = await getAccessToken();
+        if (!token) return;
+
+        progressDebug("[progress-debug] POST /api/progress", payload);
+        let res = await fetch("/api/progress", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify(payload),
+          body: payloadKey,
         });
+
+        if (res.status === 401) {
+          token = await getAccessToken(true);
+          if (!token) return;
+          res = await fetch("/api/progress", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: payloadKey,
+          });
+        }
+
+        if (res.ok) {
+          lastProgressPayloadKeyRef.current = payloadKey;
+        }
       } catch {
         // ignore
       }
     },
-    [assignmentId]
+    [assignmentId, getAccessToken]
   );
 
   const saveProgress = useCallback(
@@ -254,7 +295,7 @@ export default function YoutubePlayer({
           last_position: lastPositionSeconds,
           last_watched_at: now,
         };
-        console.log("[progress-debug] saveProgress (interval path)", {
+        progressDebug("[progress-debug] saveProgress (interval path)", {
           completed,
           duration,
           openSeg,
@@ -284,7 +325,7 @@ export default function YoutubePlayer({
         last_position: lastPositionSeconds,
         last_watched_at: now,
       };
-      console.log("[progress-debug] saveProgress (legacy path)", {
+      progressDebug("[progress-debug] saveProgress (legacy path)", {
         completed,
         percent,
         duration: durationRef.current,
@@ -308,24 +349,39 @@ export default function YoutubePlayer({
       if (!supabase || !assignmentId?.trim()) return;
       if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        await fetch("/api/watch-segments", {
+        let token = await getAccessToken();
+        if (!token) return;
+        let res = await fetch("/api/watch-segments", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             assignmentId: assignmentId as string,
             segments: [{ start_sec: startSec, end_sec: endSec }],
           }),
         });
+        if (res.status === 401) {
+          token = await getAccessToken(true);
+          if (!token) return;
+          await fetch("/api/watch-segments", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              assignmentId: assignmentId as string,
+              segments: [{ start_sec: startSec, end_sec: endSec }],
+            }),
+          });
+        }
       } catch (_: unknown) {
         // ignore
       }
     },
-    [assignmentId]
+    [assignmentId, getAccessToken]
   );
 
   useEffect(() => {
@@ -380,7 +436,7 @@ export default function YoutubePlayer({
                 if (e.data === 0) {
                   const d = p.getDuration();
                   const t = p.getCurrentTime();
-                  console.log("[progress-debug] ENDED", {
+                  progressDebug("[progress-debug] ENDED", {
                     currentTime: t,
                     lastPlayingPosition: lastPlayingPositionRef.current,
                     getDuration: d,

@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { ASSIGNMENT_SELECT_STUDENT_LIST } from "@/lib/assignments";
+import {
+  fetchStudentAssignmentsList,
+  STUDENT_ASSIGNMENTS_CACHE_TTL_MS,
+} from "@/lib/studentAssignmentsCache";
 import { getThumbnailUrl } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 const STANDALONE_PLAYLIST_ID = "standalone";
 const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
+
+/** window focus 재조회 최소 간격 */
+const ASSIGNMENTS_FOCUS_REFETCH_MS = STUDENT_ASSIGNMENTS_CACHE_TTL_MS;
 
 interface AssignmentRow {
   id: string;
@@ -35,6 +41,7 @@ export default function StudentPlaylistPage() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const lastAssignmentsFetchAtRef = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -53,18 +60,26 @@ export default function StudentPlaylistPage() {
     }
 
     let cancelled = false;
-    async function load() {
+    async function load(fromFocus = false) {
+      if (
+        fromFocus &&
+        lastAssignmentsFetchAtRef.current > 0 &&
+        Date.now() - lastAssignmentsFetchAtRef.current < ASSIGNMENTS_FOCUS_REFETCH_MS
+      ) {
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.replace("/login");
         return;
       }
 
-      // assignments 테이블 실시간 반영 (캐시 없이 매 요청마다 DB 조회)
-      const { data, error: fetchError } = await supabase
-        .from("assignments")
-        .select(ASSIGNMENT_SELECT_STUDENT_LIST)
-        .eq("user_id", user?.id ?? "");
+      const { data, error: fetchError } = await fetchStudentAssignmentsList(
+        supabase,
+        user.id,
+        { force: fromFocus }
+      );
 
       if (cancelled) return;
       if (fetchError) {
@@ -105,11 +120,12 @@ export default function StudentPlaylistPage() {
       }
 
       setAssignments(filtered);
+      lastAssignmentsFetchAtRef.current = Date.now();
       setLoading(false);
     }
 
-    load();
-    const onFocus = () => { load(); };
+    load(false);
+    const onFocus = () => { load(true); };
     window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
@@ -191,6 +207,7 @@ export default function StudentPlaylistPage() {
                       <img
                         src={getThumbnailUrl(video.video_id)}
                         alt=""
+                        loading="lazy"
                         className="h-full w-full object-cover"
                       />
                     </div>

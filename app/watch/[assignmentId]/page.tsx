@@ -6,6 +6,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { ASSIGNMENT_SELECT_WATCH, ASSIGNMENT_SELECT_WATCH_FALLBACK } from "@/lib/assignments";
 import { normalizeIntervals, type WatchedInterval } from "@/lib/watchIntervals";
+import { invalidateStudentAssignmentsCache } from "@/lib/studentAssignmentsCache";
 import YoutubePlayer from "@/components/YoutubePlayer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -33,6 +34,24 @@ function parseAssignmentId(raw: unknown): string | null {
   return s;
 }
 
+function startedAtDebug(...args: unknown[]) {
+  if (process.env.NODE_ENV === "development") {
+    console.log(...args);
+  }
+}
+
+function startedAtDebugWarn(...args: unknown[]) {
+  if (process.env.NODE_ENV === "development") {
+    console.warn(...args);
+  }
+}
+
+function startedAtDebugError(...args: unknown[]) {
+  if (process.env.NODE_ENV === "development") {
+    console.error(...args);
+  }
+}
+
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
@@ -53,27 +72,27 @@ export default function WatchPage() {
   const handleRecordStartedAt = useCallback(async () => {
     const id = assignmentId as string | null;
 
-    console.log("[started_at] 1. 재생 감지됨 (started_at 기록 트리거)");
-    console.log("[started_at] 2. assignmentId 유효 여부:", !!id, "값:", id ?? "(null)");
+    startedAtDebug("[started_at] 1. 재생 감지됨 (started_at 기록 트리거)");
+    startedAtDebug("[started_at] 2. assignmentId 유효 여부:", !!id, "값:", id ?? "(null)");
 
     if (!id || !supabase) {
-      console.warn("[started_at] 중단: assignmentId 없음 또는 supabase 없음");
+      startedAtDebugWarn("[started_at] 중단: assignmentId 없음 또는 supabase 없음");
       return;
     }
     if (recordedAssignmentIdsRef.current.has(id)) {
-      console.log("[started_at] 이미 이 배정에 대해 기록 요청함, 스킵");
+      startedAtDebug("[started_at] 이미 이 배정에 대해 기록 요청함, 스킵");
       return;
     }
     recordedAssignmentIdsRef.current.add(id);
 
-    console.log("[started_at] 3. session 확인 중...");
+    startedAtDebug("[started_at] 3. session 확인 중...");
     let session: { access_token?: string } | null = null;
     try {
       const result = await supabase.auth.getSession();
       session = result.data?.session ?? null;
-      console.log("[started_at] 4. session 존재:", !!session, ", token 있음:", !!session?.access_token);
+      startedAtDebug("[started_at] 4. session 존재:", !!session, ", token 있음:", !!session?.access_token);
     } catch (e) {
-      console.error("[started_at] getSession 예외:", e);
+      startedAtDebugError("[started_at] getSession 예외:", e);
       setStartedAtToast("로그인 세션 확인 실패");
       recordedAssignmentIdsRef.current.delete(id);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -81,8 +100,8 @@ export default function WatchPage() {
       return;
     }
 
-    console.log("[started_at] 5. DB 업데이트 시도 중... (POST /api/watch-start)");
-    console.log("[started_at] 6. 배정(assignment) 행 존재: 시청 페이지 진입 시 이미 조회됨 → 현재 페이지면 행 존재함");
+    startedAtDebug("[started_at] 5. DB 업데이트 시도 중... (POST /api/watch-start)");
+    startedAtDebug("[started_at] 6. 배정(assignment) 행 존재: 시청 페이지 진입 시 이미 조회됨 → 현재 페이지면 행 존재함");
 
     try {
       const res = await fetch("/api/watch-start", {
@@ -97,7 +116,7 @@ export default function WatchPage() {
       const data = await res.json().catch(() => ({})) as { error?: string; ok?: boolean; alreadyRecorded?: boolean };
 
       if (!res.ok) {
-        console.error("[started_at] API 응답 실패:", res.status, data);
+        startedAtDebugError("[started_at] API 응답 실패:", res.status, data);
         const errMsg = (data as { error?: string }).error ?? "시작 시간 기록에 실패했습니다.";
         setStartedAtToast(errMsg);
         recordedAssignmentIdsRef.current.delete(id);
@@ -106,9 +125,9 @@ export default function WatchPage() {
         return;
       }
 
-      console.log("[started_at] 7. 성공:", data.alreadyRecorded ? "이미 기록됨" : "새로 기록됨");
+      startedAtDebug("[started_at] 7. 성공:", data.alreadyRecorded ? "이미 기록됨" : "새로 기록됨");
     } catch (e) {
-      console.error("[started_at] fetch 예외:", e);
+      startedAtDebugError("[started_at] fetch 예외:", e);
       setStartedAtToast("시작 시간 기록 중 오류가 발생했습니다.");
       recordedAssignmentIdsRef.current.delete(id);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -120,6 +139,7 @@ export default function WatchPage() {
     setMounted(true);
     return () => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      invalidateStudentAssignmentsCache();
     };
   }, []);
 
@@ -181,17 +201,25 @@ export default function WatchPage() {
       setAssignment(data as AssignmentRow);
       setLoading(false);
 
-      // 데이터 정합성: 해당 assignment의 진도/위치 필드가 null이면 즉시 기본값으로 정규화
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        fetch("/api/watch-ensure-progress", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ assignmentId: id as string }),
-        }).catch(() => {});
+      const row = data as AssignmentRow;
+      const needNormalize =
+        row.progress_percent == null ||
+        row.last_position == null ||
+        row.is_completed == null;
+
+      // 데이터 정합성: null 필드가 있을 때만 기본값 정규화 API 호출
+      if (needNormalize) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          fetch("/api/watch-ensure-progress", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ assignmentId: id as string }),
+          }).catch(() => {});
+        }
       }
     }
 

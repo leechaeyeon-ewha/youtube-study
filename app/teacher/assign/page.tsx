@@ -46,6 +46,14 @@ interface ClassRow {
   title: string;
 }
 
+const TEACHER_ASSIGN_CACHE_TTL_MS = 30 * 1000;
+let teacherAssignCache: {
+  assignments: AssignmentRow[];
+  students: StudentSummary[];
+  classes: ClassRow[];
+  at: number;
+} | null = null;
+
 export default function TeacherAssignPage() {
   const [mounted, setMounted] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
@@ -162,6 +170,14 @@ export default function TeacherAssignPage() {
       setLoading(false);
       return;
     }
+    const now = Date.now();
+    if (teacherAssignCache && now - teacherAssignCache.at < TEACHER_ASSIGN_CACHE_TTL_MS) {
+      setStudents(teacherAssignCache.students);
+      setAssignments(teacherAssignCache.assignments);
+      setClasses(teacherAssignCache.classes);
+      setLoading(false);
+      return;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     const h: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
     const [studentsRes, assignmentsRes, classesRes] = await Promise.all([
@@ -169,9 +185,18 @@ export default function TeacherAssignPage() {
       fetch("/api/teacher/assignments-list", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/teacher/classes", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
     ]);
-    setStudents(Array.isArray(studentsRes) ? studentsRes : []);
-    setAssignments(Array.isArray(assignmentsRes) ? assignmentsRes : []);
-    setClasses(Array.isArray(classesRes) ? classesRes : []);
+    const nextStudents = Array.isArray(studentsRes) ? studentsRes : [];
+    const nextAssignments = Array.isArray(assignmentsRes) ? assignmentsRes : [];
+    const nextClasses = Array.isArray(classesRes) ? classesRes : [];
+    setStudents(nextStudents);
+    setAssignments(nextAssignments);
+    setClasses(nextClasses);
+    teacherAssignCache = {
+      assignments: nextAssignments,
+      students: nextStudents,
+      classes: nextClasses,
+      at: Date.now(),
+    };
     setLoading(false);
   }
 
@@ -180,6 +205,9 @@ export default function TeacherAssignPage() {
   }, []);
   useEffect(() => {
     load();
+    return () => {
+      teacherAssignCache = null;
+    };
   }, []);
 
   async function handleTogglePriority(assignmentId: string, current: boolean | undefined) {
@@ -192,7 +220,10 @@ export default function TeacherAssignPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ is_priority: !current }),
       });
-      if (res.ok) await load();
+      if (res.ok) {
+        teacherAssignCache = null;
+        await load();
+      }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
     } finally {
       setPriorityToggleId(null);
@@ -209,7 +240,10 @@ export default function TeacherAssignPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ prevent_skip: !current }),
       });
-      if (res.ok) await load();
+      if (res.ok) {
+        teacherAssignCache = null;
+        await load();
+      }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
     } finally {
       setSkipToggleId(null);
@@ -224,7 +258,10 @@ export default function TeacherAssignPage() {
       method: "DELETE",
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
-    if (res.ok) await load();
+    if (res.ok) {
+      teacherAssignCache = null;
+      await load();
+    }
     else alert((await res.json().catch(() => ({}))).error || "해제 실패");
   }
 
@@ -250,6 +287,7 @@ export default function TeacherAssignPage() {
       });
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
+    teacherAssignCache = null;
     await load();
   }
 
@@ -269,6 +307,7 @@ export default function TeacherAssignPage() {
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
+    teacherAssignCache = null;
     await load();
   }
 

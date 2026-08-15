@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { extractYoutubeVideoId } from "@/lib/youtube";
+import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Profile {
@@ -122,6 +123,7 @@ export default function AdminDashboardPage() {
       setTeachers(dashboardCache.teachers);
       setClasses(dashboardCache.classes);
       setLoading(false);
+      return;
     }
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -378,12 +380,7 @@ export default function AdminDashboardPage() {
       setAssignUserId(null);
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && inserted?.id) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: [inserted.id] }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, [inserted.id]);
       }
       load();
     } catch (err: unknown) {
@@ -514,12 +511,7 @@ export default function AdminDashboardPage() {
       dashboardCache = null;
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && inserted?.id) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: [inserted.id] }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, [inserted.id]);
       }
       await load();
     } catch (err: unknown) {
@@ -585,12 +577,7 @@ export default function AdminDashboardPage() {
       });
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && newIds.length > 0) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: newIds }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, newIds);
       }
       dashboardCache = null;
       await load();

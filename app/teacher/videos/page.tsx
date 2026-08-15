@@ -25,6 +25,13 @@ interface CourseGroup {
   videos: VideoRow[];
 }
 
+const TEACHER_VIDEOS_CACHE_TTL_MS = 30 * 1000;
+let teacherVideosCache: {
+  videos: VideoRow[];
+  students: StudentRow[];
+  at: number;
+} | null = null;
+
 export default function TeacherVideosPage() {
   const [mounted, setMounted] = useState(false);
   const [videos, setVideos] = useState<VideoRow[]>([]);
@@ -54,14 +61,24 @@ export default function TeacherVideosPage() {
       setLoading(false);
       return;
     }
+    const now = Date.now();
+    if (teacherVideosCache && now - teacherVideosCache.at < TEACHER_VIDEOS_CACHE_TTL_MS) {
+      setVideos(teacherVideosCache.videos);
+      setStudents(teacherVideosCache.students);
+      setLoading(false);
+      return;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     const h: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
     const [videosRes, studentsRes] = await Promise.all([
       fetch("/api/teacher/videos", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/teacher/students", { headers: h, cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
     ]);
-    setVideos(Array.isArray(videosRes) ? videosRes : []);
-    setStudents(Array.isArray(studentsRes) ? studentsRes : []);
+    const nextVideos = Array.isArray(videosRes) ? videosRes : [];
+    const nextStudents = Array.isArray(studentsRes) ? studentsRes : [];
+    setVideos(nextVideos);
+    setStudents(nextStudents);
+    teacherVideosCache = { videos: nextVideos, students: nextStudents, at: Date.now() };
     setLoading(false);
   }
 
@@ -70,6 +87,9 @@ export default function TeacherVideosPage() {
   }, []);
   useEffect(() => {
     load();
+    return () => {
+      teacherVideosCache = null;
+    };
   }, []);
 
   // 재생목록/개별 영상 그룹핑 (관리자 페이지와 동일한 구조를 간소화해서 사용)
@@ -132,6 +152,7 @@ export default function TeacherVideosPage() {
       setMessage({ type: "success", text: "영상이 등록되었습니다." });
       setUrlInput("");
       setTitleInput("");
+      teacherVideosCache = null;
       await load();
     } finally {
       setSubmitLoading(false);
@@ -171,6 +192,7 @@ export default function TeacherVideosPage() {
       });
       setPlaylistUrl("");
       setPlaylistCourseTitle("");
+      teacherVideosCache = null;
       await load();
     } finally {
       setPlaylistLoading(false);
@@ -205,6 +227,7 @@ export default function TeacherVideosPage() {
         setAssignStudentSearch("");
         setAssignModalOpen(false);
         setTimeout(() => setAssignMessage(null), 3000);
+        teacherVideosCache = null;
         load();
       } else {
         setAssignMessage({ type: "error", text: errors[0] || "배정에 실패했습니다." });

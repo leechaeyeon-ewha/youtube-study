@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
+import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import type { Video } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -469,12 +470,7 @@ export default function AdminVideosPage() {
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token && assignmentIds.length > 0) {
-      fetch("/api/revalidate-student", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ assignmentIds }),
-        cache: "no-store",
-      }).catch(() => {});
+      revalidateStudentPathsInBackground(session.access_token, assignmentIds);
     }
     loadVideos();
   }
@@ -494,12 +490,7 @@ export default function AdminVideosPage() {
       setSelectedVideoIds([]);
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && assignmentIds.length > 0) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, assignmentIds);
       }
       loadVideos();
     } catch (err: unknown) {
@@ -752,12 +743,7 @@ export default function AdminVideosPage() {
       setAssignModalOpen(false);
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && newIds.length > 0) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: newIds }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, newIds);
       }
       setAssignClassId("");
       setAssignStudentIds([]);
@@ -1216,6 +1202,7 @@ export default function AdminVideosPage() {
                               <img
                                 src={getThumbnailUrl(v.video_id)}
                                 alt=""
+                                loading="lazy"
                                 className="h-full w-full object-cover"
                               />
                             </div>
@@ -1329,6 +1316,7 @@ export default function AdminVideosPage() {
                       <img
                         src={getThumbnailUrl(v.video_id)}
                         alt=""
+                        loading="lazy"
                         className="h-full w-full object-cover"
                       />
                     </div>

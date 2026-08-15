@@ -24,5 +24,6 @@ export function extractYoutubePlaylistId(url: string): string | null {
 }
 
 export function getThumbnailUrl(videoId: string): string {
-  return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+  // default.jpg (120×90) — 목록 UI(64~72px)에 충분, mqdefault(320×180) 대비 용량 절감
+  return `https://img.youtube.com/vi/${videoId}/default.jpg`;
 }

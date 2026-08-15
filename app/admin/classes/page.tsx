@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getThumbnailUrl } from "@/lib/youtube";
+import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface Profile {
@@ -15,13 +16,6 @@ interface Profile {
 interface ClassRow {
   id: string;
   title: string;
-}
-
-interface AssignmentWithVideo {
-  id: string;
-  user_id: string;
-  progress_percent: number;
-  videos: { id: string; title: string; video_id: string } | { id: string; title: string; video_id: string }[] | null;
 }
 
 interface VideoWithCourse {
@@ -42,7 +36,6 @@ const CLASSES_CACHE_TTL_MS = 30 * 1000;
 let classesPageCache: {
   students: Profile[];
   classes: ClassRow[];
-  assignmentsByUser: Record<string, AssignmentWithVideo[]>;
   classProgress: Record<string, number>;
   courseGroups: CourseGroup[];
   at: number;
@@ -53,7 +46,6 @@ export default function AdminClassesPage() {
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<Profile[]>([]);
-  const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, AssignmentWithVideo[]>>({});
   const [classProgress, setClassProgress] = useState<Record<string, number>>({});
   const [courseGroups, setCourseGroups] = useState<CourseGroup[]>([]);
 
@@ -78,27 +70,6 @@ export default function AdminClassesPage() {
   const [addToClassLoading, setAddToClassLoading] = useState(false);
   const [addToClassMessage, setAddToClassMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
-  /** Supabase 기본 최대 행 수(1000)를 넘어도 배정을 전부 가져오기 위해 1000개 단위로 페이지 조회 후 합침 */
-  async function fetchAllAssignmentsForClasses(): Promise<AssignmentWithVideo[]> {
-    if (!supabase) return [];
-    const PAGE_SIZE = 1000;
-    let offset = 0;
-    const all: AssignmentWithVideo[] = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from("assignments")
-        .select("id, user_id, progress_percent, videos(id, title, video_id)")
-        .order("id")
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (error) return all.length > 0 ? all : [];
-      const list = ((data ?? []) as unknown) as AssignmentWithVideo[];
-      all.push(...list);
-      if (list.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
-    }
-    return all;
-  }
-
   async function load() {
     if (!supabase) {
       setLoading(false);
@@ -108,17 +79,21 @@ export default function AdminClassesPage() {
     if (classesPageCache && now - classesPageCache.at < CLASSES_CACHE_TTL_MS) {
       setStudents(classesPageCache.students);
       setClasses(classesPageCache.classes);
-      setAssignmentsByUser(classesPageCache.assignmentsByUser);
       setClassProgress(classesPageCache.classProgress);
       setCourseGroups(classesPageCache.courseGroups);
       setLoading(false);
+      return;
     }
 
     const { data: { session } } = await supabase.auth.getSession();
     const authHeaders: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
-    const [studentsRes, assignmentsList, classesRes, videosRes] = await Promise.all([
+    const [studentsRes, classProgressRes, classesRes, videosRes] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
-      fetchAllAssignmentsForClasses(),
+      fetch("/api/admin/class-progress-summary", { headers: authHeaders, cache: "no-store" }).then(async (r) => {
+        if (!r.ok) return {} as Record<string, number>;
+        const json = (await r.json()) as { classProgress?: Record<string, number> };
+        return json.classProgress ?? {};
+      }),
       supabase.from("classes").select("id, title").order("title"),
       supabase.from("videos").select("id, title, video_id, course_id, courses(id, title)").order("created_at", { ascending: false }),
     ]);
@@ -127,38 +102,7 @@ export default function AdminClassesPage() {
     const nextClasses = (classesRes?.data as ClassRow[]) ?? [];
     setStudents(studentsList);
     setClasses(nextClasses);
-
-    let nextByUser: Record<string, AssignmentWithVideo[]> = {};
-    if (assignmentsList.length > 0) {
-      const list = assignmentsList;
-      list.forEach((a) => {
-        if (!nextByUser[a.user_id]) nextByUser[a.user_id] = [];
-        nextByUser[a.user_id].push(a);
-      });
-      setAssignmentsByUser(nextByUser);
-    }
-
-    let nextProgress: Record<string, number> = {};
-    if (studentsList.length > 0 && !classesRes?.error) {
-      const classList = (classesRes?.data ?? []) as ClassRow[];
-      classList.forEach((c) => {
-        const studentIds = studentsList.filter((s) => s.class_id === c.id).map((s) => s.id);
-        if (studentIds.length === 0) {
-          nextProgress[c.id] = 0;
-          return;
-        }
-        let total = 0;
-        let count = 0;
-        studentIds.forEach((uid) => {
-          (nextByUser[uid] ?? []).forEach((a) => {
-            total += a.progress_percent;
-            count += 1;
-          });
-        });
-        nextProgress[c.id] = count === 0 ? 0 : Math.round((total / count) * 10) / 10;
-      });
-    }
-    setClassProgress(nextProgress);
+    setClassProgress(classProgressRes);
 
     let nextGroups: CourseGroup[] = [];
     if (!videosRes.error && videosRes.data) {
@@ -189,8 +133,7 @@ export default function AdminClassesPage() {
     classesPageCache = {
       students: studentsList,
       classes: nextClasses,
-      assignmentsByUser: nextByUser,
-      classProgress: nextProgress,
+      classProgress: classProgressRes,
       courseGroups: nextGroups,
       at: Date.now(),
     };
@@ -334,12 +277,7 @@ export default function AdminClassesPage() {
       setBulkAssignVideoIds([]);
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && newIds.length > 0) {
-        fetch("/api/revalidate-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ assignmentIds: newIds }),
-          cache: "no-store",
-        }).catch(() => {});
+        revalidateStudentPathsInBackground(session.access_token, newIds);
       }
       load();
     } catch (err: unknown) {
@@ -663,7 +601,7 @@ export default function AdminClassesPage() {
                                       className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                                     />
                                     <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
-                                      <img src={getThumbnailUrl(v.video_id)} alt="" className="h-full w-full object-cover" />
+                                      <img src={getThumbnailUrl(v.video_id)} alt="" loading="lazy" className="h-full w-full object-cover" />
                                     </div>
                                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-white">{v.title}</span>
                                   </li>
@@ -691,7 +629,7 @@ export default function AdminClassesPage() {
                             className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                           />
                           <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
-                            <img src={getThumbnailUrl(v.video_id)} alt="" className="h-full w-full object-cover" />
+                            <img src={getThumbnailUrl(v.video_id)} alt="" loading="lazy" className="h-full w-full object-cover" />
                           </div>
                           <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-white">{v.title}</span>
                         </li>

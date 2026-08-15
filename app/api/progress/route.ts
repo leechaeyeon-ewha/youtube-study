@@ -113,18 +113,44 @@ export async function POST(req: Request) {
     const newCompleted =
       wasCompleted || calculatedPercent >= COMPLETE_THRESHOLD_PERCENT;
 
+    const nextLastPosition =
+      lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
+    const storedPercent = Number(row.progress_percent ?? 0);
+
+    if (
+      JSON.stringify(merged) === JSON.stringify(stored) &&
+      Math.abs(calculatedPercent - storedPercent) < 0.01 &&
+      newCompleted === wasCompleted &&
+      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1
+    ) {
+      return NextResponse.json({ ok: true, skipped: true });
+    }
+
     updatePayload = {
       watched_intervals: merged,
       progress_percent: calculatedPercent,
       is_completed: newCompleted,
-      last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
+      last_position: nextLastPosition,
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
     };
   } else {
+    const nextProgress = Number(progressPercent);
+    const nextCompleted = wasCompleted || Boolean(isCompleted);
+    const nextLastPosition =
+      lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
+
+    if (
+      Math.abs(nextProgress - Number(row.progress_percent ?? 0)) < 0.01 &&
+      nextCompleted === wasCompleted &&
+      Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1
+    ) {
+      return NextResponse.json({ ok: true, skipped: true });
+    }
+
     updatePayload = {
-      progress_percent: Number(progressPercent),
-      is_completed: wasCompleted || Boolean(isCompleted),
-      last_position: lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0),
+      progress_percent: nextProgress,
+      is_completed: nextCompleted,
+      last_position: nextLastPosition,
       last_watched_at: lastWatchedAt ?? new Date().toISOString(),
     };
   }

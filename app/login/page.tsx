@@ -188,13 +188,11 @@ function LoginPageContent() {
         if (meRes.ok) {
           const profile = (await meRes.json()) as AuthMeProfile;
           if (profile?.role === "teacher") {
-            if (typeof window !== "undefined") window.location.href = "/teacher";
-            navigated = true;
+            navigated = await navigateWithFade("/teacher", profile);
             return;
           }
           if (profile?.role === "admin") {
-            if (typeof window !== "undefined") window.location.href = "/admin";
-            navigated = true;
+            navigated = await navigateWithFade("/admin", profile);
             return;
           }
           navigated = await navigateWithFade("/student", profile);
