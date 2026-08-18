@@ -195,26 +195,23 @@ export default function AdminAssignPage() {
     await revalidateStudentPathsWithRetry(accessToken, assignmentIds ?? []);
   }
 
-  /** 배정 변경 후 summary 갱신 + 해당 학생 상세 캐시 무효화 */
+  /** 배정 변경 후 summary 갱신 + 해당 학생 상세 refetch (기존 목록은 유지) */
   async function refreshAfterAssignmentMutation(userId: string, assignmentIds?: string[]) {
     clearAdminAssignCache();
-    setAssignmentsByUser((prev) => {
-      const next = { ...prev };
-      delete next[userId];
-      return next;
-    });
     if (assignmentIds?.length) await revalidateStudentPaths(assignmentIds);
     await load();
     if (expandedStudentId === userId) {
-      await fetchAssignmentsForUser(userId, true);
+      await fetchAssignmentsForUser(userId, true, true);
     }
   }
 
-  async function fetchAssignmentsForUser(userId: string, force = false) {
+  async function fetchAssignmentsForUser(userId: string, force = false, background = false) {
     if (!force && assignmentsByUser[userId]) return;
     if (!supabase) return;
     if (!accessToken) return;
-    setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: true }));
+    if (!background) {
+      setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: true }));
+    }
     try {
       const res = await fetch(`/api/admin/assignments?userId=${encodeURIComponent(userId)}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -226,7 +223,9 @@ export default function AdminAssignPage() {
         [userId]: Array.isArray(data) ? (data as AssignmentRow[]) : [],
       }));
     } finally {
-      setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: false }));
+      if (!background) {
+        setAssignmentsLoadingByUser((prev) => ({ ...prev, [userId]: false }));
+      }
     }
   }
 
@@ -596,7 +595,8 @@ export default function AdminAssignPage() {
                         </button>
                       </div>
                       {isExpanded && (() => {
-                        if (assignmentsLoadingByUser[userId]) {
+                        const listLoaded = userId in assignmentsByUser;
+                        if (assignmentsLoadingByUser[userId] && !listLoaded) {
                           return (
                             <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-8 text-center dark:border-zinc-700 dark:bg-zinc-800/30">
                               <LoadingSpinner />
