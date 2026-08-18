@@ -166,11 +166,14 @@ export async function POST(req: Request) {
     };
   }
 
+  const nextProgressPercent = Number(updatePayload.progress_percent);
+
   let { error: updateErr } = await supabase
     .from("assignments")
     .update(updatePayload)
     .eq("id", assignmentId as string)
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .lte("progress_percent", nextProgressPercent);
 
   if (
     updateErr &&
@@ -182,11 +185,13 @@ export async function POST(req: Request) {
     if (progressPercent != null && Number.isFinite(Number(progressPercent))) {
       legacyPayload.progress_percent = Number(progressPercent);
     }
+    const retryProgressPercent = Number(legacyPayload.progress_percent);
     const { error: retryErr } = await supabase
       .from("assignments")
       .update(legacyPayload)
       .eq("id", assignmentId as string)
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .lte("progress_percent", retryProgressPercent);
     updateErr = retryErr;
   }
 
