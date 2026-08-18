@@ -1,20 +1,10 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/auth/requireRole";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-async function requireAdmin(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !supabaseUrl || !supabaseAnonKey) return null;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "admin" ? user : null;
-}
 
 /** 관리자가 배정 정보를 수정한 뒤 호출. 학생/관리자/시청 페이지 캐시를 무효화해 최신 데이터가 보이도록 합니다. */
 export async function POST(req: Request) {

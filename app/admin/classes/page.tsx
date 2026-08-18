@@ -6,6 +6,8 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { getThumbnailUrl } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
+import { sortArray, type ListSortOption } from "@/lib/listSort";
 
 interface Profile {
   id: string;
@@ -17,6 +19,7 @@ interface Profile {
 interface ClassRow {
   id: string;
   title: string;
+  created_at?: string | null;
 }
 
 interface VideoWithCourse {
@@ -38,6 +41,7 @@ import {
   getAdminClassesCache,
   setAdminClassesCache,
 } from "@/lib/pageWarmup/adminClasses";
+import { fetchAllClasses, fetchAllVideosWithCoursesBasic } from "@/lib/supabasePaginatedFetch";
 
 export default function AdminClassesPage() {
   const { accessToken } = useAuth();
@@ -68,6 +72,7 @@ export default function AdminClassesPage() {
   const [addToClassSelectedIds, setAddToClassSelectedIds] = useState<string[]>([]);
   const [addToClassLoading, setAddToClassLoading] = useState(false);
   const [addToClassMessage, setAddToClassMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [classListSort, setClassListSort] = useState<ListSortOption>("");
 
   async function load() {
     if (!supabase) {
@@ -85,26 +90,26 @@ export default function AdminClassesPage() {
       return;
     }
     const authHeaders: Record<string, string> = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
-    const [studentsRes, classProgressRes, classesRes, videosRes] = await Promise.all([
+    const [studentsRes, classProgressRes, classesResult, videosResult] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/admin/class-progress-summary", { headers: authHeaders, cache: "no-store" }).then(async (r) => {
         if (!r.ok) return {} as Record<string, number>;
         const json = (await r.json()) as { classProgress?: Record<string, number> };
         return json.classProgress ?? {};
       }),
-      supabase.from("classes").select("id, title").order("title"),
-      supabase.from("videos").select("id, title, video_id, course_id, courses(id, title)").order("created_at", { ascending: false }),
+      fetchAllClasses(supabase, "id, title, created_at"),
+      fetchAllVideosWithCoursesBasic(supabase),
     ]);
 
     const studentsList = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
-    const nextClasses = (classesRes?.data as ClassRow[]) ?? [];
+    const nextClasses = (classesResult.data as ClassRow[]) ?? [];
     setStudents(studentsList);
     setClasses(nextClasses);
     setClassProgress(classProgressRes);
 
     let nextGroups: CourseGroup[] = [];
-    if (!videosRes.error && videosRes.data) {
-      const list = videosRes.data as VideoWithCourse[];
+    if (!videosResult.error && videosResult.data) {
+      const list = videosResult.data as VideoWithCourse[];
       const normalized = list.map((row) => ({
         ...row,
         courses: Array.isArray(row.courses) ? row.courses[0] ?? null : row.courses ?? null,
@@ -176,12 +181,23 @@ export default function AdminClassesPage() {
     ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
     : standaloneVideos;
 
+  const classesDisplay = sortArray(
+    classes,
+    classListSort,
+    (c) => c.title,
+    (c) => c.created_at
+  );
+
   async function handleAddClass(e: React.FormEvent) {
     e.preventDefault();
     if (!supabase || !newClassTitle.trim()) return;
     setAddClassLoading(true);
     try {
-      await supabase.from("classes").insert({ title: newClassTitle.trim() });
+      const { error } = await supabase.from("classes").insert({ title: newClassTitle.trim() });
+      if (error) {
+        alert(error.message || "반 추가에 실패했습니다.");
+        return;
+      }
       setNewClassTitle("");
       load();
     } finally {
@@ -192,8 +208,19 @@ export default function AdminClassesPage() {
   async function handleDeleteClass(classId: string) {
     if (!supabase || !confirm("이 반을 삭제할까요? 소속 학생의 반 정보만 해제됩니다.")) return;
     if (editingClassId === classId) setEditingClassId(null);
-    await supabase.from("profiles").update({ class_id: null }).eq("class_id", classId);
-    await supabase.from("classes").delete().eq("id", classId);
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ class_id: null })
+      .eq("class_id", classId);
+    if (profileError) {
+      alert(profileError.message || "학생 반 정보 해제에 실패했습니다.");
+      return;
+    }
+    const { error: classError } = await supabase.from("classes").delete().eq("id", classId);
+    if (classError) {
+      alert(classError.message || "반 삭제에 실패했습니다.");
+      return;
+    }
     load();
   }
 
@@ -439,8 +466,13 @@ export default function AdminClassesPage() {
           </button>
         </form>
         {classes.length > 0 && (
-          <ul className="flex flex-wrap gap-2">
-            {classes.map((c) => (
+          <>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400">정렬</span>
+              <ListSortDropdown value={classListSort} onChange={setClassListSort} />
+            </div>
+            <ul className="flex flex-wrap gap-2">
+            {classesDisplay.map((c) => (
               <li key={c.id} className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-zinc-800">
                 {editingClassId === c.id ? (
                   <>
@@ -491,6 +523,7 @@ export default function AdminClassesPage() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </section>
 

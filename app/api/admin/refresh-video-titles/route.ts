@@ -1,21 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { fetchAllVideosForTitleRefresh } from "@/lib/supabasePaginatedFetch";
+import { requireAdmin } from "@/lib/auth/requireRole";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const youtubeApiKey = (process.env.YOUTUBE_API_KEY ?? "").trim();
 
-async function requireAdmin(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !supabaseUrl || !supabaseAnonKey) return null;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "admin" ? user : null;
-}
 
 const YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
 const BATCH_SIZE = 50;
@@ -37,13 +28,11 @@ export async function POST(req: Request) {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data: videos, error: fetchErr } = await supabase
-    .from("videos")
-    .select("id, video_id, title");
+  const { data: videos, error: fetchErr } = await fetchAllVideosForTitleRefresh(supabase);
 
   if (fetchErr || !videos?.length) {
     return NextResponse.json(
-      { updated: 0, total: 0, message: videos?.length === 0 ? "등록된 영상이 없습니다." : fetchErr?.message ?? "영상 목록 조회 실패" }
+      { updated: 0, total: 0, message: videos?.length === 0 ? "등록된 영상이 없습니다." : fetchErr ?? "영상 목록 조회 실패" }
     );
   }
 

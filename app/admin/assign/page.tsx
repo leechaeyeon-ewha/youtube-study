@@ -329,7 +329,11 @@ export default function AdminAssignPage() {
     const ids = selectedByStudent[userId] ?? [];
     if (ids.length === 0) return;
     if (!confirm(`선택한 ${ids.length}개의 배정을 해제할까요?`)) return;
-    await supabase.from("assignments").delete().in("id", ids);
+    const { error } = await supabase.from("assignments").delete().in("id", ids);
+    if (error) {
+      alert(error.message || "배정 해제에 실패했습니다.");
+      return;
+    }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     await refreshAfterAssignmentMutation(userId, ids);
   }
@@ -341,7 +345,11 @@ export default function AdminAssignPage() {
     if (list.length === 0) return;
     if (!confirm(`이 학생의 배정 ${list.length}개를 모두 해제할까요?`)) return;
     const ids = list.map((a) => a.id);
-    await supabase.from("assignments").delete().in("id", ids);
+    const { error } = await supabase.from("assignments").delete().in("id", ids);
+    if (error) {
+      alert(error.message || "배정 해제에 실패했습니다.");
+      return;
+    }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
     await refreshAfterAssignmentMutation(userId, ids);
@@ -352,7 +360,11 @@ export default function AdminAssignPage() {
     if (!supabase) return;
     if (assignmentIds.length === 0) return;
     if (!confirm(`이 재생목록의 배정 ${assignmentIds.length}개를 모두 해제할까요?`)) return;
-    await supabase.from("assignments").delete().in("id", assignmentIds);
+    const { error } = await supabase.from("assignments").delete().in("id", assignmentIds);
+    if (error) {
+      alert(error.message || "배정 해제에 실패했습니다.");
+      return;
+    }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     await refreshAfterAssignmentMutation(userId, assignmentIds);
   }
@@ -396,7 +408,11 @@ export default function AdminAssignPage() {
   async function handleUnassign(id: string, userId: string) {
     if (!supabase) return;
     if (!confirm("이 배정을 해제할까요?")) return;
-    await supabase.from("assignments").delete().eq("id", id);
+    const { error } = await supabase.from("assignments").delete().eq("id", id);
+    if (error) {
+      alert(error.message || "배정 해제에 실패했습니다.");
+      return;
+    }
     await refreshAfterAssignmentMutation(userId, [id]);
   }
 

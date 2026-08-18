@@ -6,12 +6,15 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
 import Modal from "@/components/Modal";
+import { sortArray, type ListSortOption } from "@/lib/listSort";
 import {
   clearAdminDashboardCache,
   getAdminDashboardCache,
   setAdminDashboardCache,
 } from "@/lib/pageWarmup/adminDashboard";
+import { fetchAllClasses } from "@/lib/supabasePaginatedFetch";
 
 interface Profile {
   id: string;
@@ -96,6 +99,8 @@ export default function AdminDashboardPage() {
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
   /** 학생 이름 검색어 */
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  /** 학생 목록 날짜/이름 정렬 (빈 값 = 기존 순서) */
+  const [studentListSort, setStudentListSort] = useState<ListSortOption>("");
   /** 목록 탭: 학생 | 강사 */
   const [listTab, setListTab] = useState<"students" | "teachers">("students");
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
@@ -127,15 +132,15 @@ export default function AdminDashboardPage() {
     const authHeaders: Record<string, string> = accessToken
       ? { Authorization: `Bearer ${accessToken}` }
       : {};
-    const [studentsRes, teachersRes, classesRes] = await Promise.all([
+    const [studentsRes, teachersRes, classesResult] = await Promise.all([
       fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
       fetch("/api/admin/teachers", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
-      supabase.from("classes").select("id, title").order("title"),
+      fetchAllClasses(supabase, "id, title"),
     ]);
 
     const nextStudents = Array.isArray(studentsRes) ? (studentsRes as Profile[]) : [];
     const nextTeachers = Array.isArray(teachersRes) ? (teachersRes as TeacherRow[]) : [];
-    const nextClasses = (classesRes.error ? [] : (classesRes.data as ClassRow[]) ?? []);
+    const nextClasses = classesResult.error ? [] : ((classesResult.data as ClassRow[]) ?? []);
 
     setStudents(nextStudents);
     setTeachers(nextTeachers);
@@ -679,7 +684,14 @@ export default function AdminDashboardPage() {
     if (!supabase) return;
     setReportToggleUserId(studentId);
     try {
-      await supabase.from("profiles").update({ is_report_enabled: !currentEnabled }).eq("id", studentId);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ is_report_enabled: !currentEnabled })
+        .eq("id", studentId);
+      if (error) {
+        alert(error.message || "리포트 설정 변경에 실패했습니다.");
+        return;
+      }
       load();
     } finally {
       setReportToggleUserId(null);
@@ -700,7 +712,14 @@ export default function AdminDashboardPage() {
     if (!supabase) return;
     setUpdatingClassId(studentId);
     try {
-      await supabase.from("profiles").update({ class_id: classId || null }).eq("id", studentId);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ class_id: classId || null })
+        .eq("id", studentId);
+      if (error) {
+        alert(error.message || "반 변경에 실패했습니다.");
+        return;
+      }
       load();
     } finally {
       setUpdatingClassId(null);
@@ -709,15 +728,21 @@ export default function AdminDashboardPage() {
 
   async function handleStudentGradeChange(studentId: string, grade: string | null) {
     if (!supabase) return;
-    try {
-      await supabase.from("profiles").update({ grade: grade || null }).eq("id", studentId);
-      // 로컬 상태도 즉시 반영
+    const previousGrade = students.find((s) => s.id === studentId)?.grade ?? null;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ grade: grade || null })
+      .eq("id", studentId);
+    if (error) {
+      alert(error.message || "학년 변경에 실패했습니다.");
       setStudents((prev) =>
-        prev.map((s) => (s.id === studentId ? { ...s, grade: grade || null } : s))
+        prev.map((s) => (s.id === studentId ? { ...s, grade: previousGrade } : s))
       );
-    } catch {
-      // 무시 (간단한 편집 기능이므로 알림만 없어도 무방)
+      return;
     }
+    setStudents((prev) =>
+      prev.map((s) => (s.id === studentId ? { ...s, grade: grade || null } : s))
+    );
   }
 
   const searchLower = studentSearchQuery.trim().toLowerCase();
@@ -757,6 +782,13 @@ export default function AdminDashboardPage() {
     }
     return 0;
   });
+
+  const studentsDisplay = sortArray(
+    studentsSorted,
+    studentListSort,
+    (s) => s.full_name ?? s.email ?? "",
+    (s) => (s as { created_at?: string | null }).created_at
+  );
 
   if (loading) {
     return (
@@ -1017,11 +1049,12 @@ export default function AdminDashboardPage() {
               >
                 반별
               </button>
+              <ListSortDropdown value={studentListSort} onChange={setStudentListSort} />
             </div>
           </div>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-zinc-700">
-          {studentsSorted.length === 0 ? (
+          {studentsDisplay.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
               {studentSearchQuery.trim()
                 ? "검색 결과가 없습니다. 다른 이름으로 검색해 보세요."
@@ -1030,7 +1063,7 @@ export default function AdminDashboardPage() {
                   : "퇴원생이 없습니다."}
             </div>
           ) : (
-            studentsSorted.map((s) => (
+            studentsDisplay.map((s) => (
               <div key={s.id} className="px-6 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">

@@ -1,21 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { fetchTeacherStudents } from "@/lib/studentsListFetch";
+import { requireTeacher } from "@/lib/auth/requireRole";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 /** 강사 본인에게 할당된 학생만 반환 (role=teacher, teacher_id=본인 id 인 학생) */
-async function requireTeacher(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !supabaseUrl || !supabaseAnonKey) return null;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "teacher" ? user : null;
-}
 
 /** 강사 전용: 본인 담당 학생 목록만 조회 */
 export async function GET(req: Request) {
@@ -31,61 +22,41 @@ export async function GET(req: Request) {
   }
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
-  let data: Record<string, unknown>[] | null = null;
+  const { data: fetched, error: fetchError } = await fetchTeacherStudents(supabase, teacher.id);
+  if (fetchError) {
+    return NextResponse.json({ error: fetchError }, { status: 500 });
+  }
 
-  const { data: withStatus, error: errWith } = await supabase
-    .from("profiles")
-    .select(`${baseSelect}, enrollment_status`)
-    .eq("role", "student")
-    .eq("teacher_id", teacher.id)
-    .order("full_name");
+  const isMinimal = fetched.length > 0 && !("report_token" in fetched[0]);
+  const isWithoutTeacher = !isMinimal && fetched.length > 0 && !("teacher_id" in fetched[0]);
 
-  if (errWith) {
-    const baseWithoutTeacher = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
-    const { data: withoutStatus, error: errWithout } = await supabase
-      .from("profiles")
-      .select(`${baseWithoutTeacher}, enrollment_status`)
-      .eq("role", "student")
-      .eq("teacher_id", teacher.id)
-      .order("full_name");
-
-    if (errWithout) {
-      const { data: minimal, error: errMinimal } = await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .eq("role", "student")
-        .eq("teacher_id", teacher.id)
-        .order("full_name");
-      if (errMinimal) {
-        return NextResponse.json({ error: errMinimal.message }, { status: 500 });
-      }
-      data = (minimal ?? []).map((row) => ({
-        ...row,
-        report_token: null,
-        is_report_enabled: false,
-        parent_phone: null,
-        class_id: null,
-        grade: null,
-        enrollment_status: "enrolled",
-        teacher_id: teacher.id,
-      }));
-    } else {
-      data = (withoutStatus ?? []).map((row) => ({
-        ...row,
-        grade: (row as { grade?: string | null }).grade ?? null,
-        enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
-        teacher_id: teacher.id,
-      }));
-    }
+  let data: Record<string, unknown>[];
+  if (isMinimal) {
+    data = fetched.map((row) => ({
+      ...row,
+      report_token: null,
+      is_report_enabled: false,
+      parent_phone: null,
+      class_id: null,
+      grade: null,
+      enrollment_status: "enrolled",
+      teacher_id: teacher.id,
+    }));
+  } else if (isWithoutTeacher) {
+    data = fetched.map((row) => ({
+      ...row,
+      grade: (row as { grade?: string | null }).grade ?? null,
+      enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
+      teacher_id: teacher.id,
+    }));
   } else {
-    data = (withStatus ?? []).map((row) => ({
+    data = fetched.map((row) => ({
       ...row,
       teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? teacher.id,
     }));
   }
 
-  return NextResponse.json(data ?? []);
+  return NextResponse.json(data);
 }
 
 /** 강사 전용: 본인 담당 학생의 정보만 수정 (class_id, grade, is_report_enabled). 퇴원/삭제 불가. */

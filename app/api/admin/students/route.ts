@@ -1,20 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { fetchAdminStudentsForAssign, fetchAdminStudentsFull } from "@/lib/studentsListFetch";
+import { requireAdmin } from "@/lib/auth/requireRole";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-async function requireAdmin(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !supabaseUrl || !supabaseAnonKey) return null;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "admin" ? user : null;
-}
 
 /** 관리자 전용: 학생 목록 조회 (서비스 롤 사용, 탭 이동 후에도 목록 유지) */
 export async function GET(req: Request) {
@@ -33,90 +24,56 @@ export async function GET(req: Request) {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   if (scope === "assign") {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, full_name, email, grade, class_id, enrollment_status, teacher_id")
-      .eq("role", "student")
-      .order("full_name");
-
+    const { data, error } = await fetchAdminStudentsForAssign(supabase);
     if (error) {
-      const fallback = await supabase
-        .from("profiles")
-        .select("id, full_name, email, grade, class_id, teacher_id")
-        .eq("role", "student")
-        .order("full_name");
-      if (fallback.error) {
-        return NextResponse.json({ error: fallback.error.message }, { status: 500 });
-      }
-      const rows = (fallback.data ?? []).map((row) => ({
-        ...row,
-        enrollment_status: "enrolled" as const,
-      }));
-      return NextResponse.json(rows);
+      return NextResponse.json({ error }, { status: 500 });
     }
-
-    return NextResponse.json(
-      (data ?? []).map((row) => ({
-        ...row,
-        enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
-      }))
-    );
+    const hasEnrollmentStatus = data.some((row) => "enrollment_status" in row);
+    const rows = data.map((row) => ({
+      ...row,
+      enrollment_status: hasEnrollmentStatus
+        ? ((row as { enrollment_status?: string }).enrollment_status ?? "enrolled")
+        : ("enrolled" as const),
+    }));
+    return NextResponse.json(rows);
   }
 
   // grade, teacher_id 컬럼은 선택적이므로 없을 때도 동작하도록
-  const baseSelect = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
-  let data: Record<string, unknown>[] | null = null;
+  const { data: fetched, error: fetchError } = await fetchAdminStudentsFull(supabase);
+  if (fetchError) {
+    return NextResponse.json({ error: fetchError }, { status: 500 });
+  }
 
-  const { data: withStatus, error: errWith } = await supabase
-    .from("profiles")
-    .select(`${baseSelect}, enrollment_status`)
-    .eq("role", "student")
-    .order("full_name");
+  const isMinimal = fetched.length > 0 && !("report_token" in fetched[0]);
+  const isWithoutTeacher = !isMinimal && fetched.length > 0 && !("teacher_id" in fetched[0]);
 
-  if (errWith) {
-    const msg = errWith.message ?? "";
-    const baseWithoutTeacher = "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
-    const { data: withoutStatus, error: errWithout } = await supabase
-      .from("profiles")
-      .select(`${baseWithoutTeacher}, enrollment_status`)
-      .eq("role", "student")
-      .order("full_name");
-
-    if (errWithout) {
-      const { data: minimal, error: errMinimal } = await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .eq("role", "student")
-        .order("full_name");
-      if (errMinimal) {
-        return NextResponse.json({ error: errMinimal.message }, { status: 500 });
-      }
-      data = (minimal ?? []).map((row) => ({
-        ...row,
-        report_token: null,
-        is_report_enabled: false,
-        parent_phone: null,
-        class_id: null,
-        grade: null,
-        enrollment_status: "enrolled",
-        teacher_id: null,
-      }));
-    } else {
-      data = (withoutStatus ?? []).map((row) => ({
-        ...row,
-        grade: (row as { grade?: string | null }).grade ?? null,
-        enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
-        teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? null,
-      }));
-    }
+  let data: Record<string, unknown>[];
+  if (isMinimal) {
+    data = fetched.map((row) => ({
+      ...row,
+      report_token: null,
+      is_report_enabled: false,
+      parent_phone: null,
+      class_id: null,
+      grade: null,
+      enrollment_status: "enrolled",
+      teacher_id: null,
+    }));
+  } else if (isWithoutTeacher) {
+    data = fetched.map((row) => ({
+      ...row,
+      grade: (row as { grade?: string | null }).grade ?? null,
+      enrollment_status: (row as { enrollment_status?: string }).enrollment_status ?? "enrolled",
+      teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? null,
+    }));
   } else {
-    data = (withStatus ?? []).map((row) => ({
+    data = fetched.map((row) => ({
       ...row,
       teacher_id: (row as { teacher_id?: string | null }).teacher_id ?? null,
     }));
   }
 
-  return NextResponse.json(data ?? []);
+  return NextResponse.json(data);
 }
 
 export async function POST(req: Request) {

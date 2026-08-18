@@ -7,7 +7,9 @@ import { extractYoutubeVideoId, getThumbnailUrl } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import type { Video } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
 import Modal from "@/components/Modal";
+import { earliestCreatedAt, sortArray, type ListSortOption } from "@/lib/listSort";
 
 interface VideoWithCourse extends Video {
   sort_order?: number;
@@ -38,6 +40,7 @@ import {
   getAdminVideosCache,
   setAdminVideosCache,
 } from "@/lib/pageWarmup/adminVideos";
+import { fetchAllVideosAdminFull } from "@/lib/supabasePaginatedFetch";
 
 export default function AdminVideosPage() {
   const { accessToken } = useAuth();
@@ -98,6 +101,9 @@ export default function AdminVideosPage() {
   const [addVideoToCourseMessage, setAddVideoToCourseMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [preventSkipToggleVideoId, setPreventSkipToggleVideoId] = useState<string | null>(null);
   const [preventSkipToggleCourseKey, setPreventSkipToggleCourseKey] = useState<string | null>(null);
+  const [playlistListSort, setPlaylistListSort] = useState<ListSortOption>("");
+  const [singleVideoListSort, setSingleVideoListSort] = useState<ListSortOption>("");
+  const [playlistVideoListSort, setPlaylistVideoListSort] = useState<ListSortOption>("");
 
   function buildCourseGroupsFromVideos(list: VideoWithCourse[]): CourseGroup[] {
     const normalized = list.map((row) => ({
@@ -142,24 +148,11 @@ export default function AdminVideosPage() {
     }
     let data: VideoWithCourse[] | null = null;
     let error: { message: string } | null = null;
-    const res = await supabase
-      .from("videos")
-      .select("id, title, video_id, course_id, is_visible, is_weekly_assignment, prevent_skip_default, sort_order, created_at, courses(id, title, sort_order)")
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: false });
-    data = res.data as VideoWithCourse[] | null;
-    error = res.error;
-    if (error && data == null) {
-      // 컬럼이 없을 수도 있는 환경(예: prevent_skip_default 미적용)에서는
-      // 더 좁은 컬럼 집합으로 재조회해 목록이 사라지지 않도록 한다.
-      const fallback = await supabase
-        .from("videos")
-        .select("id, title, video_id, course_id, created_at, courses(id, title)")
-        .order("created_at", { ascending: false });
-      if (!fallback.error && fallback.data) {
-        data = fallback.data as VideoWithCourse[];
-        error = null;
-      }
+    const { data: fetched, error: fetchError } = await fetchAllVideosAdminFull(supabase);
+    if (fetchError) {
+      error = { message: fetchError };
+    } else {
+      data = fetched as VideoWithCourse[];
     }
     if (!error && data && data.length >= 0) {
       const groups = buildCourseGroupsFromVideos(data);
@@ -223,8 +216,25 @@ export default function AdminVideosPage() {
   const filteredStandaloneVideos = searchLower
     ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
     : standaloneVideos;
+
+  const displayPlaylistGroupsBase = filteredPlaylistGroups.map((g) => ({
+    ...g,
+    videos: sortArray(g.videos, playlistVideoListSort, (v) => v.title, (v) => v.created_at),
+  }));
+  const displayPlaylistGroups = sortArray(
+    displayPlaylistGroupsBase,
+    playlistListSort,
+    (g) => g.courseTitle,
+    (g) => earliestCreatedAt(g.videos.map((v) => v.created_at))
+  );
+  const displayStandaloneVideos = sortArray(
+    filteredStandaloneVideos,
+    singleVideoListSort,
+    (v) => v.title,
+    (v) => v.created_at
+  );
   const displayedVideos =
-    activeTab === "playlist" ? filteredPlaylistGroups.flatMap((g) => g.videos) : filteredStandaloneVideos;
+    activeTab === "playlist" ? displayPlaylistGroups.flatMap((g) => g.videos) : displayStandaloneVideos;
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -333,6 +343,7 @@ export default function AdminVideosPage() {
       });
       setAssignmentDetailList(rows);
     } catch (_err: unknown) {
+      alert("배정자 목록을 불러오지 못했습니다.");
       setAssignmentDetailList([]);
     } finally {
       setDetailLoading(false);
@@ -369,6 +380,7 @@ export default function AdminVideosPage() {
       );
       setCourseAssigneeList(list);
     } catch (_err: unknown) {
+      alert("배정자 목록을 불러오지 못했습니다.");
       setCourseAssigneeList([]);
     } finally {
       setCourseAssigneesLoading(false);
@@ -469,8 +481,16 @@ export default function AdminVideosPage() {
     if (!supabase || !confirm("이 영상을 삭제할까요? 해당 영상에 대한 학생 배정이 자동으로 해제됩니다.")) return;
     const { data: affected } = await supabase.from("assignments").select("id").eq("video_id", id);
     const assignmentIds = ((affected ?? []) as { id: string }[]).map((r) => r.id);
-    await supabase.from("assignments").delete().eq("video_id", id);
-    await supabase.from("videos").delete().eq("id", id);
+    const { error: assignError } = await supabase.from("assignments").delete().eq("video_id", id);
+    if (assignError) {
+      alert(assignError.message || "배정 해제에 실패했습니다.");
+      return;
+    }
+    const { error: videoError } = await supabase.from("videos").delete().eq("id", id);
+    if (videoError) {
+      alert(videoError.message || "영상 삭제에 실패했습니다.");
+      return;
+    }
     setSelectedVideoIds((prev) => prev.filter((x) => x !== id));
     if (accessToken && assignmentIds.length > 0) {
       revalidateStudentPathsInBackground(accessToken, assignmentIds);
@@ -486,7 +506,8 @@ export default function AdminVideosPage() {
     try {
       const { data: affected } = await supabase.from("assignments").select("id").in("video_id", selectedVideoIds);
       const assignmentIds = ((affected ?? []) as { id: string }[]).map((r) => r.id);
-      await supabase.from("assignments").delete().in("video_id", selectedVideoIds);
+      const { error: assignError } = await supabase.from("assignments").delete().in("video_id", selectedVideoIds);
+      if (assignError) throw assignError;
       const { error } = await supabase.from("videos").delete().in("id", selectedVideoIds);
       if (error) throw error;
       setBulkMessage({ type: "success", text: `선택한 ${selectedVideoIds.length}개 영상이 삭제되었습니다. (배정 자동 해제)` });
@@ -564,6 +585,7 @@ export default function AdminVideosPage() {
       if (prevRes.error || currRes.error) {
         setCourseGroups(previousGroups);
         await loadVideos();
+        alert("재생목록 순서 변경에 실패했습니다.");
       }
     } finally {
       setReorderLoading(null);
@@ -601,6 +623,7 @@ export default function AdminVideosPage() {
       if (currRes.error || nextRes.error) {
         setCourseGroups(previousGroups);
         await loadVideos();
+        alert("재생목록 순서 변경에 실패했습니다.");
       }
     } finally {
       setReorderLoading(null);
@@ -638,6 +661,7 @@ export default function AdminVideosPage() {
       if (prevRes.error || currRes.error) {
         setCourseGroups(previousGroups);
         await loadVideos();
+        alert("영상 순서 변경에 실패했습니다.");
       }
     } finally {
       setReorderLoading(null);
@@ -675,6 +699,7 @@ export default function AdminVideosPage() {
       if (currRes.error || nextRes.error) {
         setCourseGroups(previousGroups);
         await loadVideos();
+        alert("영상 순서 변경에 실패했습니다.");
       }
     } finally {
       setReorderLoading(null);
@@ -821,11 +846,11 @@ export default function AdminVideosPage() {
         .update({ prevent_skip_default: next })
         .eq("id", videoId);
       if (error) throw error;
-      // 이미 배정된 학생들의 스킵 방지 설정도 함께 반영
-      await supabase
+      const { error: assignError } = await supabase
         .from("assignments")
         .update({ prevent_skip: next })
         .eq("video_id", videoId);
+      if (assignError) throw assignError;
       clearAdminVideosCache();
       await loadVideos();
     } catch (err) {
@@ -861,11 +886,11 @@ export default function AdminVideosPage() {
       }
       const { error } = await query;
       if (error) throw error;
-      // 해당 재생목록의 모든 영상에 대한 기존 배정들의 스킵 방지 설정도 반영
-      await supabase
+      const { error: assignError } = await supabase
         .from("assignments")
         .update({ prevent_skip: next })
         .in("video_id", videoIds);
+      if (assignError) throw assignError;
       clearAdminVideosCache();
       await loadVideos();
     } catch (err) {
@@ -995,7 +1020,7 @@ export default function AdminVideosPage() {
         )}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           {(playlistGroups.length > 0 || standaloneVideos.length > 0) && (
-            <div className="mb-3">
+            <div className="mb-3 flex flex-wrap items-center gap-3">
               <input
                 type="text"
                 value={videoSearchTitle}
@@ -1003,6 +1028,20 @@ export default function AdminVideosPage() {
                 placeholder="제목으로 검색..."
                 className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
               />
+              {activeTab === "playlist" && (
+                <>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">재생목록</span>
+                  <ListSortDropdown value={playlistListSort} onChange={setPlaylistListSort} />
+                  <span className="text-xs text-slate-500 dark:text-slate-400">재생목록 내 영상</span>
+                  <ListSortDropdown value={playlistVideoListSort} onChange={setPlaylistVideoListSort} />
+                </>
+              )}
+              {activeTab === "single" && (
+                <>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">등록된 영상</span>
+                  <ListSortDropdown value={singleVideoListSort} onChange={setSingleVideoListSort} />
+                </>
+              )}
             </div>
           )}
           {displayedVideos.length > 0 && (
@@ -1054,7 +1093,9 @@ export default function AdminVideosPage() {
           </div>
         ) : activeTab === "playlist" ? (
           <div className="space-y-4">
-            {filteredPlaylistGroups.map((group, groupIndex) => {
+            {displayPlaylistGroups.map((group) => {
+              const groupIndex = filteredPlaylistGroups.findIndex((g) => g.courseId === group.courseId);
+              const sourceGroup = filteredPlaylistGroups[groupIndex] ?? group;
               const ids = group.videos.map((v) => v.id);
               const allInGroupSelected =
                 ids.length > 0 && ids.every((id) => selectedVideoIds.includes(id));
@@ -1073,7 +1114,7 @@ export default function AdminVideosPage() {
                         <button
                           type="button"
                           onClick={() => moveCourseUp(groupIndex)}
-                          disabled={groupIndex === 0 || !!courseBusy}
+                          disabled={groupIndex <= 0 || !!courseBusy}
                           className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-700 dark:hover:text-slate-300"
                           title="위로"
                           aria-label="재생목록 위로"
@@ -1164,7 +1205,8 @@ export default function AdminVideosPage() {
                   </div>
                   {isExpanded && (
                     <ul className="divide-y divide-slate-100 dark:divide-zinc-800">
-                      {group.videos.map((v, videoIndex) => {
+                      {group.videos.map((v) => {
+                        const videoIndex = sourceGroup.videos.findIndex((vv) => vv.id === v.id);
                         const videoBusy = reorderLoading === `video-${v.id}`;
                         return (
                           <li
@@ -1175,7 +1217,7 @@ export default function AdminVideosPage() {
                               <button
                                 type="button"
                                 onClick={() => moveVideoUp(group.courseId, videoIndex)}
-                                disabled={videoIndex === 0 || !!videoBusy}
+                                disabled={videoIndex <= 0 || !!videoBusy}
                                 className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
                                 title="위로"
                                 aria-label="영상 위로"
@@ -1185,7 +1227,7 @@ export default function AdminVideosPage() {
                               <button
                                 type="button"
                                 onClick={() => moveVideoDown(group.courseId, videoIndex)}
-                                disabled={videoIndex === group.videos.length - 1 || !!videoBusy}
+                                disabled={videoIndex >= sourceGroup.videos.length - 1 || videoIndex < 0 || !!videoBusy}
                                 className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 dark:hover:bg-zinc-600 dark:hover:text-slate-300"
                                 title="아래로"
                                 aria-label="영상 아래로"
@@ -1277,7 +1319,7 @@ export default function AdminVideosPage() {
             {(() => {
               const standaloneGroup = courseGroups.find((g) => g.courseId === null);
               const standaloneVideosList = standaloneGroup?.videos ?? [];
-              return filteredStandaloneVideos.map((v) => {
+              return displayStandaloneVideos.map((v) => {
                 const videoIndex = standaloneVideosList.findIndex((vv) => vv.id === v.id);
                 const videoBusy = reorderLoading === `video-${v.id}`;
                 return (

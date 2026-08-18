@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { fetchAllVideosAdminFull } from "@/lib/supabasePaginatedFetch";
 
 export const ADMIN_VIDEOS_CACHE_TTL_MS = 30 * 1000;
 
@@ -68,23 +69,9 @@ export async function warmAdminVideos(): Promise<void> {
   if (getAdminVideosCache() || !supabase) return;
 
   let data: unknown[] | null = null;
-  const res = await supabase
-    .from("videos")
-    .select(
-      "id, title, video_id, course_id, is_visible, is_weekly_assignment, prevent_skip_default, sort_order, created_at, courses(id, title, sort_order)"
-    )
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: false });
-
-  data = res.data;
-  if (res.error && data == null) {
-    const fallback = await supabase
-      .from("videos")
-      .select("id, title, video_id, course_id, created_at, courses(id, title)")
-      .order("created_at", { ascending: false });
-    if (!fallback.error && fallback.data) {
-      data = fallback.data;
-    }
+  const { data: fetched, error } = await fetchAllVideosAdminFull(supabase);
+  if (!error) {
+    data = fetched;
   }
 
   if (data) {

@@ -5,6 +5,8 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
+import { sortArray, type ListSortOption } from "@/lib/listSort";
 
 interface Profile {
   id: string;
@@ -62,6 +64,7 @@ export default function TeacherDashboardPage() {
   const [librarySearchTitle, setLibrarySearchTitle] = useState("");
   const [assignPlaylistCourseKey, setAssignPlaylistCourseKey] = useState<string | null>(null);
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  const [studentListSort, setStudentListSort] = useState<ListSortOption>("");
   const [addFullName, setAddFullName] = useState("");
   const [addPassword, setAddPassword] = useState("");
   const [addLoading, setAddLoading] = useState(false);
@@ -358,6 +361,13 @@ export default function TeacherDashboardPage() {
       (s.email ?? "").toLowerCase().includes(searchLower)
   );
 
+  const studentsDisplay = sortArray(
+    studentsFiltered,
+    studentListSort,
+    (s) => s.full_name ?? s.email ?? "",
+    (s) => (s as { created_at?: string | null }).created_at
+  );
+
   if (!mounted) return null;
 
   if (loading) {
@@ -428,23 +438,26 @@ export default function TeacherDashboardPage() {
           <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
             담당 학생 목록
           </h2>
-          <input
-            type="text"
-            value={studentSearchQuery}
-            onChange={(e) => setStudentSearchQuery(e.target.value)}
-            placeholder="학생 이름 검색"
-            className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-slate-500"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <ListSortDropdown value={studentListSort} onChange={setStudentListSort} />
+            <input
+              type="text"
+              value={studentSearchQuery}
+              onChange={(e) => setStudentSearchQuery(e.target.value)}
+              placeholder="학생 이름 검색"
+              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white dark:placeholder:text-slate-500"
+            />
+          </div>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-zinc-700">
-          {studentsFiltered.length === 0 ? (
+          {studentsDisplay.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
               {studentSearchQuery.trim()
                 ? "검색 결과가 없습니다."
                 : "담당 학생이 없습니다. 위에서 학생을 등록하거나 관리자에게 할당을 요청하세요."}
             </div>
           ) : (
-            studentsFiltered.map((s) => (
+            studentsDisplay.map((s) => (
               <div key={s.id} className="px-6 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">

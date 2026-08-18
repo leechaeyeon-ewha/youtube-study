@@ -5,13 +5,16 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
 import Modal from "@/components/Modal";
+import { earliestCreatedAt, sortArray, type ListSortOption } from "@/lib/listSort";
 
 interface VideoRow {
   id: string;
   title: string;
   video_id: string;
   course_id: string | null;
+  created_at?: string | null;
   courses?: { id: string; title: string } | null;
 }
 
@@ -57,6 +60,9 @@ export default function TeacherVideosPage() {
   const [activeTab, setActiveTab] = useState<"playlist" | "single">("playlist");
   /** 재생목록 탭에서 펼친 재생목록: courseId (접히면 null) */
   const [expandedPlaylistCourseKey, setExpandedPlaylistCourseKey] = useState<string | null>(null);
+  const [playlistListSort, setPlaylistListSort] = useState<ListSortOption>("");
+  const [singleVideoListSort, setSingleVideoListSort] = useState<ListSortOption>("");
+  const [playlistVideoListSort, setPlaylistVideoListSort] = useState<ListSortOption>("");
 
   async function load() {
     if (!supabase) {
@@ -257,10 +263,27 @@ export default function TeacherVideosPage() {
     ? standaloneVideos.filter((v) => (v.title || "").toLowerCase().includes(searchLower))
     : standaloneVideos;
 
+  const displayPlaylistGroupsBase = filteredPlaylistGroups.map((g) => ({
+    ...g,
+    videos: sortArray(g.videos, playlistVideoListSort, (v) => v.title, (v) => v.created_at),
+  }));
+  const displayPlaylistGroups = sortArray(
+    displayPlaylistGroupsBase,
+    playlistListSort,
+    (g) => g.courseTitle,
+    (g) => earliestCreatedAt(g.videos.map((v) => v.created_at))
+  );
+  const displayStandaloneVideos = sortArray(
+    filteredStandaloneVideos,
+    singleVideoListSort,
+    (v) => v.title,
+    (v) => v.created_at
+  );
+
   const displayedVideos =
     activeTab === "playlist"
-      ? filteredPlaylistGroups.flatMap((g) => g.videos)
-      : filteredStandaloneVideos;
+      ? displayPlaylistGroups.flatMap((g) => g.videos)
+      : displayStandaloneVideos;
 
   function toggleSelectAll() {
     if (displayedVideos.length === 0) return;
@@ -400,13 +423,29 @@ export default function TeacherVideosPage() {
               개별 영상
             </button>
           </div>
-          <input
-            type="text"
-            value={searchTitle}
-            onChange={(e) => setSearchTitle(e.target.value)}
-            placeholder="제목 검색"
-            className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {activeTab === "playlist" && (
+              <>
+                <span className="text-xs text-slate-500 dark:text-slate-400">재생목록</span>
+                <ListSortDropdown value={playlistListSort} onChange={setPlaylistListSort} />
+                <span className="text-xs text-slate-500 dark:text-slate-400">재생목록 내 영상</span>
+                <ListSortDropdown value={playlistVideoListSort} onChange={setPlaylistVideoListSort} />
+              </>
+            )}
+            {activeTab === "single" && (
+              <>
+                <span className="text-xs text-slate-500 dark:text-slate-400">등록된 영상</span>
+                <ListSortDropdown value={singleVideoListSort} onChange={setSingleVideoListSort} />
+              </>
+            )}
+            <input
+              type="text"
+              value={searchTitle}
+              onChange={(e) => setSearchTitle(e.target.value)}
+              placeholder="제목 검색"
+              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
         </div>
         {displayedVideos.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-6 py-3 dark:border-zinc-700">
@@ -440,7 +479,7 @@ export default function TeacherVideosPage() {
                 {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 재생목록이 없습니다."}
               </li>
             ) : (
-              filteredPlaylistGroups.map((g) => {
+              displayPlaylistGroups.map((g) => {
                 const courseKey = g.courseId ?? "__none__";
                 const isExpanded = expandedPlaylistCourseKey === courseKey;
                 const ids = g.videos.map((v) => v.id);
@@ -523,12 +562,12 @@ export default function TeacherVideosPage() {
           </ul>
         ) : (
           <ul className="divide-y divide-slate-100 dark:divide-zinc-700">
-            {filteredStandaloneVideos.length === 0 ? (
+            {displayStandaloneVideos.length === 0 ? (
               <li className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
                 {searchTitle.trim() ? "검색 결과가 없습니다." : "등록된 개별 영상이 없습니다."}
               </li>
             ) : (
-              filteredStandaloneVideos.map((v) => (
+              displayStandaloneVideos.map((v) => (
                 <li key={v.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
                     <input

@@ -1,22 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { Pool } from "pg";
+import { requireAdmin } from "@/lib/auth/requireRole";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-async function requireAdmin(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !supabaseUrl || !supabaseAnonKey) return null;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const userResult = await supabase.auth.getUser(token);
-  const user = userResult?.data?.user ?? null;
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "admin" ? user : null;
-}
 
 /** 관리자 전용: enrollment_status 컬럼 추가 마이그레이션 실행 (DATABASE_URL 필요) */
 export async function POST(req: Request) {

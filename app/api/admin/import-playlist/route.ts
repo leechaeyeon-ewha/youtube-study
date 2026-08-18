@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { extractYoutubePlaylistId } from "@/lib/youtube";
+import { requireAdmin } from "@/lib/auth/requireRole";
 
 function getEnv() {
   return {
@@ -11,16 +12,6 @@ function getEnv() {
   };
 }
 
-async function requireAdmin(req: Request, env: ReturnType<typeof getEnv>) {
-  const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token || !env.supabaseUrl || !env.supabaseAnonKey) return null;
-  const supabase = createClient(env.supabaseUrl, env.supabaseAnonKey);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return profile?.role === "admin" ? user : null;
-}
 
 interface PlaylistItem {
   videoId: string;
@@ -71,7 +62,7 @@ export async function POST(req: Request) {
   try {
     const env = getEnv();
 
-    const admin = await requireAdmin(req, env);
+    const admin = await requireAdmin(req);
     if (!admin) {
       return NextResponse.json({ error: "관리자만 접근할 수 있습니다." }, { status: 401 });
     }

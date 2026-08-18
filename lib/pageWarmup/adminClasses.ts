@@ -1,5 +1,6 @@
 import { authHeadersFromToken, getAccessTokenSync } from "@/lib/auth/accessTokenStore";
 import { supabase } from "@/lib/supabase";
+import { fetchAllClasses, fetchAllVideosWithCoursesBasic } from "@/lib/supabasePaginatedFetch";
 
 export const ADMIN_CLASSES_CACHE_TTL_MS = 30 * 1000;
 
@@ -32,7 +33,7 @@ export async function warmAdminClasses(): Promise<void> {
   const authHeaders = authHeadersFromToken(getAccessTokenSync());
   if (!authHeaders.Authorization) return;
 
-  const [studentsRes, classProgressRes, classesRes, videosRes] = await Promise.all([
+  const [studentsRes, classProgressRes, classesResult, videosResult] = await Promise.all([
     fetch("/api/admin/students", { headers: authHeaders }).then((r) => (r.ok ? r.json() : [])),
     fetch("/api/admin/class-progress-summary", { headers: authHeaders, cache: "no-store" }).then(
       async (r) => {
@@ -41,19 +42,16 @@ export async function warmAdminClasses(): Promise<void> {
         return json.classProgress ?? {};
       }
     ),
-    supabase.from("classes").select("id, title").order("title"),
-    supabase
-      .from("videos")
-      .select("id, title, video_id, course_id, courses(id, title)")
-      .order("created_at", { ascending: false }),
+    fetchAllClasses(supabase, "id, title"),
+    fetchAllVideosWithCoursesBasic(supabase),
   ]);
 
   const studentsList = Array.isArray(studentsRes) ? studentsRes : [];
-  const nextClasses = (classesRes?.data ?? []) as unknown[];
+  const nextClasses = classesResult.data ?? [];
 
   let nextGroups: unknown[] = [];
-  if (!videosRes.error && videosRes.data) {
-    const list = videosRes.data as {
+  if (!videosResult.error && videosResult.data) {
+    const list = videosResult.data as {
       course_id?: string | null;
       courses?: { id: string; title: string } | { id: string; title: string }[] | null;
     }[];
