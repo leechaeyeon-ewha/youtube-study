@@ -710,17 +710,25 @@ export default function AdminDashboardPage() {
 
   async function handleStudentClassChange(studentId: string, classId: string | null) {
     if (!supabase) return;
+    const previousClassId = students.find((s) => s.id === studentId)?.class_id ?? null;
+    const nextClassId = classId || null;
     setUpdatingClassId(studentId);
     try {
       const { error } = await supabase
         .from("profiles")
-        .update({ class_id: classId || null })
+        .update({ class_id: nextClassId })
         .eq("id", studentId);
       if (error) {
         alert(error.message || "반 변경에 실패했습니다.");
+        setStudents((prev) =>
+          prev.map((s) => (s.id === studentId ? { ...s, class_id: previousClassId } : s))
+        );
         return;
       }
-      load();
+      clearAdminDashboardCache();
+      setStudents((prev) =>
+        prev.map((s) => (s.id === studentId ? { ...s, class_id: nextClassId } : s))
+      );
     } finally {
       setUpdatingClassId(null);
     }
