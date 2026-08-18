@@ -9,7 +9,7 @@ export async function fetchAdminStudentsForAssign(
 ): Promise<{ data: Record<string, unknown>[]; error: string | null }> {
   const withStatus = await fetchAllPaginated<Record<string, unknown>>(supabase, {
     from: "profiles",
-    select: "id, full_name, email, grade, class_id, enrollment_status, teacher_id",
+    select: "id, full_name, email, grade, class_id, enrollment_status, teacher_id, created_at",
     filters: { role: "student" },
     order: [...STUDENT_ORDER],
   });
@@ -20,7 +20,7 @@ export async function fetchAdminStudentsForAssign(
 
   return fetchAllPaginated(supabase, {
     from: "profiles",
-    select: "id, full_name, email, grade, class_id, teacher_id",
+    select: "id, full_name, email, grade, class_id, teacher_id, created_at",
     filters: { role: "student" },
     order: [...STUDENT_ORDER],
   });
@@ -31,7 +31,7 @@ export async function fetchAdminStudentsFull(
   supabase: SupabaseClient
 ): Promise<{ data: Record<string, unknown>[]; error: string | null }> {
   const baseSelect =
-    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
+    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id, created_at";
 
   const withStatus = await fetchAllPaginated<Record<string, unknown>>(supabase, {
     from: "profiles",
@@ -45,7 +45,7 @@ export async function fetchAdminStudentsFull(
   }
 
   const baseWithoutTeacher =
-    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
+    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, created_at";
 
   const withoutTeacher = await fetchAllPaginated<Record<string, unknown>>(supabase, {
     from: "profiles",
@@ -60,7 +60,7 @@ export async function fetchAdminStudentsFull(
 
   return fetchAllPaginated(supabase, {
     from: "profiles",
-    select: "id, full_name, email",
+    select: "id, full_name, email, created_at",
     filters: { role: "student" },
     order: [...STUDENT_ORDER],
   });
@@ -72,7 +72,7 @@ export async function fetchTeacherStudents(
   teacherId: string
 ): Promise<{ data: Record<string, unknown>[]; error: string | null }> {
   const baseSelect =
-    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id";
+    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, teacher_id, created_at";
 
   const withStatus = await fetchAllPaginated<Record<string, unknown>>(supabase, {
     from: "profiles",
@@ -86,7 +86,7 @@ export async function fetchTeacherStudents(
   }
 
   const baseWithoutTeacher =
-    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade";
+    "id, full_name, email, report_token, is_report_enabled, parent_phone, class_id, grade, created_at";
 
   const withoutTeacher = await fetchAllPaginated<Record<string, unknown>>(supabase, {
     from: "profiles",
@@ -101,7 +101,7 @@ export async function fetchTeacherStudents(
 
   return fetchAllPaginated(supabase, {
     from: "profiles",
-    select: "id, full_name, email",
+    select: "id, full_name, email, created_at",
     filters: { role: "student", teacher_id: teacherId },
     order: [...STUDENT_ORDER],
   });

@@ -72,6 +72,7 @@ export default function AdminClassesPage() {
   const [addToClassSelectedIds, setAddToClassSelectedIds] = useState<string[]>([]);
   const [addToClassLoading, setAddToClassLoading] = useState(false);
   const [addToClassMessage, setAddToClassMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [removeFromClassStudentId, setRemoveFromClassStudentId] = useState<string | null>(null);
   const [classListSort, setClassListSort] = useState<ListSortOption>("");
 
   async function load() {
@@ -343,6 +344,37 @@ export default function AdminClassesPage() {
     }
   }
 
+  async function handleRemoveStudentFromClass(
+    studentId: string,
+    classId: string,
+    displayName: string
+  ) {
+    if (!supabase) return;
+    if (
+      !confirm(
+        `"${displayName}" 학생을 이 반에서 제거할까요?\n(학생 계정은 유지되며 반 소속만 해제됩니다.)`
+      )
+    ) {
+      return;
+    }
+    setRemoveFromClassStudentId(studentId);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ class_id: null })
+        .eq("id", studentId)
+        .eq("class_id", classId);
+      if (error) {
+        alert(error.message || "반에서 제거에 실패했습니다.");
+        return;
+      }
+      clearAdminClassesCache();
+      load();
+    } finally {
+      setRemoveFromClassStudentId(null);
+    }
+  }
+
   return (
     <div className="space-y-10">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">반 관리</h1>
@@ -384,8 +416,27 @@ export default function AdminClassesPage() {
                       ) : (
                         <ul className="space-y-1.5">
                           {classStudents.map((s) => (
-                            <li key={s.id} className="text-sm text-slate-800 dark:text-slate-200">
-                              {s.full_name || s.email || s.id.slice(0, 8)}
+                            <li
+                              key={s.id}
+                              className="flex items-center justify-between gap-2 text-sm text-slate-800 dark:text-slate-200"
+                            >
+                              <span className="min-w-0 truncate">
+                                {s.full_name || s.email || s.id.slice(0, 8)}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={removeFromClassStudentId === s.id}
+                                onClick={() =>
+                                  handleRemoveStudentFromClass(
+                                    s.id,
+                                    c.id,
+                                    s.full_name || s.email || "학생"
+                                  )
+                                }
+                                className="shrink-0 text-xs text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
+                              >
+                                {removeFromClassStudentId === s.id ? "제거 중..." : "제거"}
+                              </button>
                             </li>
                           ))}
                         </ul>

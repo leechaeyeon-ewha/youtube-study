@@ -1018,29 +1018,33 @@ export default function AdminVideosPage() {
             {refreshTitlesMessage.text}
           </div>
         )}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
           {(playlistGroups.length > 0 || standaloneVideos.length > 0) && (
-            <div className="mb-3 flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
               <input
                 type="text"
                 value={videoSearchTitle}
                 onChange={(e) => setVideoSearchTitle(e.target.value)}
                 placeholder="제목으로 검색..."
-                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                className="min-w-[140px] basis-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white sm:max-w-xs sm:basis-auto"
               />
               {activeTab === "playlist" && (
                 <>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">재생목록</span>
-                  <ListSortDropdown value={playlistListSort} onChange={setPlaylistListSort} />
-                  <span className="text-xs text-slate-500 dark:text-slate-400">재생목록 내 영상</span>
-                  <ListSortDropdown value={playlistVideoListSort} onChange={setPlaylistVideoListSort} />
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">재생목록</span>
+                    <ListSortDropdown value={playlistListSort} onChange={setPlaylistListSort} />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">재생목록 내 영상</span>
+                    <ListSortDropdown value={playlistVideoListSort} onChange={setPlaylistVideoListSort} />
+                  </div>
                 </>
               )}
               {activeTab === "single" && (
-                <>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">등록된 영상</span>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">등록된 영상</span>
                   <ListSortDropdown value={singleVideoListSort} onChange={setSingleVideoListSort} />
-                </>
+                </div>
               )}
             </div>
           )}
