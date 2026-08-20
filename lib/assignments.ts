@@ -8,9 +8,9 @@
 export const ASSIGNMENT_SELECT_ADMIN =
   "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))";
 
-/** 학생 목록/재생목록: 카드·진도·재생목록 그룹용 (videos + courses만) */
+/** 학생 목록/재생목록: 카드·진도·재생목록 그룹·배정일 정렬용 */
 export const ASSIGNMENT_SELECT_STUDENT_LIST =
-  "id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, videos(id, title, video_id, course_id, courses(id, title))";
+  "id, is_completed, progress_percent, is_visible, is_weekly_assignment, is_priority, created_at, videos(id, title, video_id, course_id, courses(id, title))";
 
 /** 시청 페이지 단일 배정: 진도 저장·플레이어용. watched_intervals 컬럼이 없으면 조회 실패 → 시청 페이지에서 FALLBACK 사용 */
 export const ASSIGNMENT_SELECT_WATCH =

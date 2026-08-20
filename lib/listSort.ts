@@ -37,6 +37,24 @@ export function sortArray<T>(
   });
 }
 
+/** 학생 재생목록 카드: 배정일 ↑는 earliest, ↓는 latest 기준 */
+export function sortStudentPlaylistCards<
+  T extends { title: string; earliestAssignedAt?: string; latestAssignedAt?: string },
+>(cards: readonly T[], option: ListSortOption): T[] {
+  if (option.startsWith("name")) {
+    return sortArray(cards, option, (p) => p.title, () => undefined);
+  }
+  if (option.startsWith("date")) {
+    const asc = option === "date-asc";
+    return [...cards].sort((a, b) => {
+      const da = asc ? a.earliestAssignedAt : a.latestAssignedAt;
+      const db = asc ? b.earliestAssignedAt : b.latestAssignedAt;
+      return compareByDate(da, db, asc);
+    });
+  }
+  return [...cards];
+}
+
 /** 재생목록 그룹의 등록일: 그룹 내 영상 중 가장 이른 created_at */
 export function earliestCreatedAt(dates: (string | null | undefined)[]): string | undefined {
   let best: string | undefined;
@@ -45,6 +63,21 @@ export function earliestCreatedAt(dates: (string | null | undefined)[]): string 
     if (!d) continue;
     const t = new Date(d).getTime();
     if (!Number.isNaN(t) && t < bestTime) {
+      bestTime = t;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/** 재생목록 그룹의 배정일(최신): 그룹 내 배정 중 가장 늦은 created_at */
+export function latestCreatedAt(dates: (string | null | undefined)[]): string | undefined {
+  let best: string | undefined;
+  let bestTime = -Infinity;
+  for (const d of dates) {
+    if (!d) continue;
+    const t = new Date(d).getTime();
+    if (!Number.isNaN(t) && t > bestTime) {
       bestTime = t;
       best = d;
     }

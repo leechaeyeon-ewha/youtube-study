@@ -13,6 +13,16 @@ import {
 } from "@/lib/studentAssignmentsCache";
 import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
+import {
+  earliestCreatedAt,
+  latestCreatedAt,
+  sortArray,
+  sortStudentPlaylistCards,
+  type ListSortOption,
+} from "@/lib/listSort";
+
+const VIDEO_SEARCH_DEBOUNCE_MS = 300;
 
 type Tab = "student" | "report";
 
@@ -21,6 +31,10 @@ export interface PlaylistCard {
   id: string; // "standalone" | course uuid
   title: string;
   videoCount: number;
+  /** 그룹 내 가장 이른 배정일 (날짜순 ↑) */
+  earliestAssignedAt?: string;
+  /** 그룹 내 가장 늦은 배정일 (날짜순 ↓) */
+  latestAssignedAt?: string;
 }
 
 interface AssignmentRow {
@@ -31,6 +45,8 @@ interface AssignmentRow {
   is_weekly_assignment?: boolean;
    /** 우선 학습(오늘의 미션) 여부 */
   is_priority?: boolean;
+  /** 관리자/강사 배정일 */
+  created_at?: string | null;
   videos: {
     id: string;
     title: string;
@@ -67,9 +83,9 @@ function applyProfileToState(
   setEmailInput(email && !email.endsWith("@academy.local") ? email : "");
 }
 
-/** 할당 목록에서 재생목록 카드 목록 생성 (개별 보충 영상 최상단) */
+/** 할당 목록에서 재생목록 카드 목록 생성 (정렬은 클라이언트에서 별도 적용) */
 function buildPlaylistCards(assignments: AssignmentRow[]): PlaylistCard[] {
-  const byCourse = new Map<string, { title: string; count: number }>();
+  const byCourse = new Map<string, { title: string; count: number; assignedDates: string[] }>();
   for (const a of assignments) {
     const v = a.videos;
     if (!v) continue;
@@ -79,21 +95,52 @@ function buildPlaylistCards(assignments: AssignmentRow[]): PlaylistCard[] {
       key === STANDALONE_PLAYLIST_ID
         ? STANDALONE_PLAYLIST_TITLE
         : (v.courses && !Array.isArray(v.courses) ? (v.courses as { title: string }).title : null) ?? "기타";
-    if (!byCourse.has(key)) byCourse.set(key, { title, count: 0 });
+    if (!byCourse.has(key)) byCourse.set(key, { title, count: 0, assignedDates: [] });
     const entry = byCourse.get(key)!;
     entry.count += 1;
+    if (a.created_at) entry.assignedDates.push(a.created_at);
   }
   const cards: PlaylistCard[] = [];
   byCourse.forEach((value, id) => {
-    cards.push({ id, title: value.title, videoCount: value.count });
-  });
-  // 개별 보충 영상이 있으면 최상단, 나머지는 제목순
-  cards.sort((a, b) => {
-    if (a.id === STANDALONE_PLAYLIST_ID) return -1;
-    if (b.id === STANDALONE_PLAYLIST_ID) return 1;
-    return a.title.localeCompare(b.title);
+    cards.push({
+      id,
+      title: value.title,
+      videoCount: value.count,
+      earliestAssignedAt: earliestCreatedAt(value.assignedDates),
+      latestAssignedAt: latestCreatedAt(value.assignedDates),
+    });
   });
   return cards;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function matchesVideoTitleSearch(title: string, query: string): boolean {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  return normalizeSearchText(title).includes(normalizedQuery);
+}
+
+function getPlaylistTitleForAssignment(a: AssignmentRow): string {
+  const v = a.videos;
+  if (!v) return "기타";
+  const courseId = v.course_id ?? null;
+  if (courseId === null) return STANDALONE_PLAYLIST_TITLE;
+  if (v.courses && !Array.isArray(v.courses)) {
+    return (v.courses as { title: string }).title;
+  }
+  return "기타";
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 function CircularProgress({ percent, label }: { percent: number; label: string }) {
@@ -198,7 +245,29 @@ export default function StudentPage() {
   const { showBanner, installPrompt, platform, installing, runInstall } = usePwaInstall();
   const [pwaDismissed, setPwaDismissed] = useState(false);
   const isKakaoBrowser = useIsKakaoBrowser();
+  const [playlistListSort, setPlaylistListSort] = useState<ListSortOption>("date-desc");
+  const [videoSearchQuery, setVideoSearchQuery] = useState("");
+  const debouncedVideoSearchQuery = useDebouncedValue(videoSearchQuery, VIDEO_SEARCH_DEBOUNCE_MS);
+  const isVideoSearchActive = normalizeSearchText(debouncedVideoSearchQuery).length > 0;
   const playlists = useMemo(() => buildPlaylistCards(assignments), [assignments]);
+  const sortedPlaylists = useMemo(
+    () => sortStudentPlaylistCards(playlists, playlistListSort),
+    [playlists, playlistListSort]
+  );
+  const videoSearchResults = useMemo(() => {
+    if (!isVideoSearchActive) return [];
+    const matched = assignments.filter((a) => {
+      const title = a.videos?.title;
+      if (!title) return false;
+      return matchesVideoTitleSearch(title, debouncedVideoSearchQuery);
+    });
+    return sortArray(
+      matched,
+      playlistListSort,
+      (a) => a.videos?.title ?? "",
+      (a) => a.created_at
+    );
+  }, [assignments, debouncedVideoSearchQuery, isVideoSearchActive, playlistListSort]);
 
   const [tab, setTab] = useState<Tab>("student");
   const [reportData, setReportData] = useState<ReportData | null>(null);
@@ -636,7 +705,7 @@ export default function StudentPage() {
           </div>
         ) : (
           <>
-            {priorityAssignments.length > 0 && (
+            {priorityAssignments.length > 0 && !isVideoSearchActive && (
               <section className="mb-8 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm dark:border-amber-700 dark:bg-amber-900/20">
                 <h2 className="mb-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
                   오늘의 미션 · <span className="font-bold">우선 학습</span>
@@ -677,8 +746,94 @@ export default function StudentPage() {
               </section>
             )}
 
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={videoSearchQuery}
+                onChange={(e) => setVideoSearchQuery(e.target.value)}
+                placeholder="영상 제목 검색..."
+                aria-label="영상 제목 검색"
+                className="min-w-[140px] flex-1 basis-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white sm:max-w-md sm:basis-auto"
+              />
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {isVideoSearchActive ? "검색 결과" : "재생목록"}
+                </span>
+                <ListSortDropdown
+                  id="student-playlist-list-sort"
+                  value={playlistListSort}
+                  onChange={setPlaylistListSort}
+                />
+              </div>
+            </div>
+
+            {isVideoSearchActive ? (
+              videoSearchResults.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-slate-500 dark:text-slate-400">
+                    &quot;{videoSearchQuery.trim()}&quot;에 해당하는 영상이 없습니다.
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                    제목 일부만 입력해도 검색됩니다. 재생목록 안의 영상도 모두 검색 대상입니다.
+                  </p>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {videoSearchResults.map((a) => {
+                    const v = a.videos;
+                    if (!v) return null;
+                    const playlistTitle = getPlaylistTitleForAssignment(a);
+                    return (
+                      <li key={a.id}>
+                        <Link
+                          href={`/watch/${encodeURIComponent(a.id)}`}
+                          className="flex items-stretch gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-indigo-200 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-800"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <h2 className="break-words font-medium text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+                              {v.title}
+                            </h2>
+                            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+                              재생목록 · {playlistTitle}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              {a.is_priority && (
+                                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white">
+                                  우선 학습
+                                </span>
+                              )}
+                              {a.is_weekly_assignment && (
+                                <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[11px] font-semibold text-white">
+                                  주간 과제
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
+                                {a.is_completed
+                                  ? "시청 완료"
+                                  : `진도 ${(a.progress_percent ?? 0).toFixed(0)}%`}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center">
+                            <span
+                              className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${
+                                a.is_completed
+                                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                              }`}
+                            >
+                              {a.is_completed ? "완료" : "미완료"}
+                            </span>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {playlists.map((playlist) => (
+              {sortedPlaylists.map((playlist) => (
                 <PrefetchLink
                   key={playlist.id}
                   href={`/student/playlist/${encodeURIComponent(playlist.id)}`}
@@ -699,6 +854,7 @@ export default function StudentPage() {
                 </PrefetchLink>
               ))}
             </div>
+            )}
           </>
         )}
           </>

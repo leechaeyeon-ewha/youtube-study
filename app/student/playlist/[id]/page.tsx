@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -11,6 +11,8 @@ import {
 } from "@/lib/studentAssignmentsCache";
 import { getThumbnailUrl } from "@/lib/youtube";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ListSortDropdown from "@/components/ListSortDropdown";
+import { sortArray, type ListSortOption } from "@/lib/listSort";
 
 const STANDALONE_PLAYLIST_ID = "standalone";
 const STANDALONE_PLAYLIST_TITLE = "개별 보충 영상";
@@ -24,6 +26,8 @@ interface AssignmentRow {
   progress_percent: number;
   is_visible?: boolean;
   is_weekly_assignment?: boolean;
+  /** 관리자/강사 배정일 */
+  created_at?: string | null;
   videos: {
     id: string;
     title: string;
@@ -42,7 +46,19 @@ export default function StudentPlaylistPage() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [videoListSort, setVideoListSort] = useState<ListSortOption>("date-desc");
   const lastAssignmentsFetchAtRef = useRef(0);
+
+  const sortedAssignments = useMemo(
+    () =>
+      sortArray(
+        assignments,
+        videoListSort,
+        (a) => a.videos?.title ?? "",
+        (a) => a.created_at
+      ),
+    [assignments, videoListSort]
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -176,6 +192,16 @@ export default function StudentPlaylistPage() {
           <p className="mt-1 text-slate-500 dark:text-slate-400">
             영상 {assignments.length}개 · 클릭하면 시청 페이지로 이동합니다.
           </p>
+          {assignments.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400">재생목록 내 영상</span>
+              <ListSortDropdown
+                id="student-playlist-video-sort"
+                value={videoListSort}
+                onChange={setVideoListSort}
+              />
+            </div>
+          )}
         </header>
 
         {assignments.length === 0 ? (
@@ -189,7 +215,7 @@ export default function StudentPlaylistPage() {
           </div>
         ) : (
           <ul className="space-y-2">
-            {assignments.map((a, index) => {
+            {sortedAssignments.map((a, index) => {
               const video = a.videos;
               if (!video) return null;
               return (
