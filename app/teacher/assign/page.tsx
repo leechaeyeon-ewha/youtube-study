@@ -5,6 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Modal from "@/components/Modal";
+import AssignVideoListToolbar from "@/components/AssignVideoListToolbar";
+import {
+  getPlaylistTitleForAssignment,
+  prepareAssignStudentListView,
+  VIDEO_SEARCH_DEBOUNCE_MS,
+} from "@/lib/assignmentVideoList";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import type { ListSortOption } from "@/lib/listSort";
 
 interface AssignmentRow {
   id: string;
@@ -17,6 +25,7 @@ interface AssignmentRow {
   prevent_skip?: boolean;
   is_visible?: boolean;
   is_priority?: boolean;
+  created_at?: string | null;
   videos:
     | {
         id: string;
@@ -67,6 +76,16 @@ export default function TeacherAssignPage() {
   const [selectedByStudent, setSelectedByStudent] = useState<Record<string, string[]>>({});
   const [studentSort, setStudentSort] = useState<"none" | "grade" | "class">("none");
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  const [videoSearchByStudent, setVideoSearchByStudent] = useState<Record<string, string>>({});
+  const [playlistListSortByStudent, setPlaylistListSortByStudent] = useState<Record<string, ListSortOption>>({});
+  const [playlistVideoListSortByStudent, setPlaylistVideoListSortByStudent] = useState<
+    Record<string, ListSortOption>
+  >({});
+  const expandedVideoSearchRaw = expandedStudentId ? (videoSearchByStudent[expandedStudentId] ?? "") : "";
+  const debouncedExpandedVideoSearch = useDebouncedValue(
+    expandedVideoSearchRaw,
+    VIDEO_SEARCH_DEBOUNCE_MS
+  );
   const [detailModalAssignment, setDetailModalAssignment] = useState<AssignmentRow | null>(null);
   const [priorityToggleId, setPriorityToggleId] = useState<string | null>(null);
   const [skipToggleId, setSkipToggleId] = useState<string | null>(null);
@@ -452,39 +471,50 @@ export default function TeacherAssignPage() {
                         {isExpanded &&
                           (() => {
                             const filter = progressFilterByStudent[userId] ?? "all";
-                            const filteredList =
-                              filter === "completed"
-                                ? list.filter((a) => a.is_completed)
-                                : filter === "incomplete"
-                                  ? list.filter((a) => !a.is_completed)
-                                  : filter === "priority"
-                                    ? list.filter((a) => a.is_priority)
-                                    : list;
-                            const completedCount = list.filter((a) => a.is_completed).length;
-                            const incompleteCount = list.length - completedCount;
-                            const priorityCount = list.filter((a) => a.is_priority).length;
-                            const NONE_KEY = "__none__";
-                            const groups = (() => {
-                              const map = new Map<string, { courseTitle: string; assignments: AssignmentRow[] }>();
-                              for (const a of filteredList) {
-                                const v = Array.isArray(a.videos) ? a.videos[0] : a.videos;
-                                const key = v?.course_id ?? NONE_KEY;
-                                const courseTitle = (() => {
-                                  if (!v?.courses) return "기타 동영상";
-                                  const c = Array.isArray(v.courses) ? v.courses[0] : v.courses;
-                                  return (c as { title?: string })?.title ?? "기타 동영상";
-                                })();
-                                if (!map.has(key)) map.set(key, { courseTitle, assignments: [] });
-                                map.get(key)!.assignments.push(a);
-                              }
-                              return Array.from(map.entries()).map(([courseKey, { courseTitle, assignments }]) => ({
-                                courseKey,
-                                courseTitle,
-                                assignments,
-                              }));
-                            })();
+                            const debouncedVideoSearch =
+                              expandedStudentId === userId ? debouncedExpandedVideoSearch : "";
+                            const playlistListSort = playlistListSortByStudent[userId] ?? "date-desc";
+                            const playlistVideoListSort =
+                              playlistVideoListSortByStudent[userId] ?? "date-desc";
                             const selectedKey = expandedPlaylistByStudent[userId];
-                            const showPlaylistList = selectedKey == null;
+                            const {
+                              filteredList,
+                              completedCount,
+                              incompleteCount,
+                              priorityCount,
+                              isVideoSearchActive,
+                              searchResults,
+                              sortedGroups,
+                              showPlaylistList,
+                              sortedShowList,
+                            } = prepareAssignStudentListView({
+                              assignments: list,
+                              progressFilter: filter,
+                              debouncedVideoSearch,
+                              playlistListSort,
+                              playlistVideoListSort,
+                              selectedPlaylistKey: selectedKey,
+                            });
+                            const videoSearchToolbar =
+                              list.length > 0 ? (
+                                <AssignVideoListToolbar
+                                  searchInputId={`teacher-assign-video-search-${userId}`}
+                                  videoSearch={videoSearchByStudent[userId] ?? ""}
+                                  onVideoSearchChange={(value) =>
+                                    setVideoSearchByStudent((prev) => ({ ...prev, [userId]: value }))
+                                  }
+                                  playlistListSort={playlistListSort}
+                                  onPlaylistListSortChange={(value) =>
+                                    setPlaylistListSortByStudent((prev) => ({ ...prev, [userId]: value }))
+                                  }
+                                  playlistVideoListSort={playlistVideoListSort}
+                                  onPlaylistVideoListSortChange={(value) =>
+                                    setPlaylistVideoListSortByStudent((prev) => ({ ...prev, [userId]: value }))
+                                  }
+                                  isSearchActive={isVideoSearchActive}
+                                  showPlaylistList={showPlaylistList}
+                                />
+                              ) : null;
 
                             /** 진도별 보기 버튼(전체/완료/미완료) — 항상 표시되어 다른 필터로 전환 가능 */
                             const progressFilterButtons = (
@@ -540,6 +570,7 @@ export default function TeacherAssignPage() {
                             if (filteredList.length === 0) {
                               return (
                                 <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
+                                  {videoSearchToolbar}
                                   {progressFilterButtons}
                                   <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
                                     {filter === "all"
@@ -550,6 +581,58 @@ export default function TeacherAssignPage() {
                                           ? "미완료 영상이 없습니다."
                                           : "우선 학습으로 지정된 영상이 없습니다."}
                                   </p>
+                                </div>
+                              );
+                            }
+
+                            if (isVideoSearchActive) {
+                              return (
+                                <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/30">
+                                  {progressFilterButtons}
+                                  {videoSearchToolbar}
+                                  {searchResults.length === 0 ? (
+                                    <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                                      &quot;{(videoSearchByStudent[userId] ?? "").trim()}&quot;에 해당하는 영상이 없습니다.
+                                    </p>
+                                  ) : (
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-left text-sm">
+                                        <thead>
+                                          <tr className="border-b border-slate-200 dark:border-zinc-700">
+                                            <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">재생목록</th>
+                                            <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">영상</th>
+                                            <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">진도율</th>
+                                            <th className="px-4 py-2 font-medium text-slate-600 dark:text-slate-400">완료</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {searchResults.map((a) => {
+                                            const video = Array.isArray(a.videos) ? a.videos[0] : a.videos;
+                                            return (
+                                              <tr key={a.id} className="border-b border-slate-100 last:border-0 dark:border-zinc-700/50">
+                                                <td className="px-4 py-2.5 text-xs text-indigo-600 dark:text-indigo-400">
+                                                  {getPlaylistTitleForAssignment(a)}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-slate-800 dark:text-slate-200">
+                                                  {video?.title ?? "-"}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">
+                                                  {a.progress_percent.toFixed(1)}%
+                                                </td>
+                                                <td className="px-4 py-2.5">
+                                                  {a.is_completed ? (
+                                                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">완료</span>
+                                                  ) : (
+                                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">미완료</span>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
                                 </div>
                               );
                             }
@@ -567,11 +650,12 @@ export default function TeacherAssignPage() {
                                       한 번에 배정 해제 ({list.length}개)
                                     </button>
                                   </div>
+                                  {videoSearchToolbar}
                                   <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                                     재생목록을 선택하면 해당 목록에 포함된 배정 영상들을 볼 수 있습니다. (재생목록에 속하지 않은 개별 영상은 &quot;기타 동영상&quot;에 모입니다.)
                                   </p>
                                   <ul className="space-y-1.5 rounded-lg border border-slate-200 dark:border-zinc-700">
-                                    {groups.map(({ courseKey, courseTitle, assignments }) => (
+                                    {sortedGroups.map(({ courseKey, courseTitle, assignments }) => (
                                       <li key={courseKey}>
                                         <button
                                           type="button"
@@ -590,8 +674,7 @@ export default function TeacherAssignPage() {
                               );
                             }
 
-                            const current = groups.find((g) => g.courseKey === selectedKey);
-                            const showList = current?.assignments ?? [];
+                            const showList = sortedShowList;
 
                             return (
                               <div className="border-t border-slate-100 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-800/30">
@@ -605,6 +688,7 @@ export default function TeacherAssignPage() {
                                     ← 재생목록 목록으로
                                   </button>
                                 </div>
+                                <div className="px-4 pt-3">{videoSearchToolbar}</div>
                                 <div className="overflow-x-auto">
                                   <table className="w-full text-left text-sm">
                                     <thead>

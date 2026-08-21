@@ -6,7 +6,7 @@
 
 /** 관리자: 배정 목록·진도·상세·우선학습·스킵방지 (assignments + videos + courses join) */
 export const ASSIGNMENT_SELECT_ADMIN =
-  "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, videos(id, title, video_id, course_id, courses(id, title))";
+  "id, user_id, is_completed, progress_percent, last_position, last_watched_at, started_at, prevent_skip, is_visible, is_priority, created_at, videos(id, title, video_id, course_id, courses(id, title))";
 
 /** 학생 목록/재생목록: 카드·진도·재생목록 그룹·배정일 정렬용 */
 export const ASSIGNMENT_SELECT_STUDENT_LIST =
