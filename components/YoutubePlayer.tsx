@@ -44,19 +44,27 @@ const READY_TIMEOUT_MS = 12_000;
 /** 플레이어 생성 직후 이 시간까지만 onApiChange로 자막 OFF 재시도 */
 const CAPTIONS_DISABLE_WINDOW_MS = 5000;
 
-/** iframe 위 터치 차단 구역(픽셀·Tailwind는 여기만 조정) */
+/** iframe 위 터치 차단 구역(위치·clamp 크기는 여기만 조정) */
 const OVERLAY_ZONES = {
   topLeft: {
     /** 좌상단 채널·제목. 우측 176px(right-44)는 음량·CC·설정 */
     className: "absolute left-0 top-0 right-44 z-10 h-14 cursor-default sm:h-16",
   },
   bottomLeft: {
-    /** 좌하단 공유·나중에 볼 동영상 (~144×60). bottom-1: 앱 진도 h-1과 겹침 방지 */
-    className: "absolute bottom-1 left-0 z-10 h-[60px] w-36 cursor-default",
+    /** 좌하단 공유·나중에 볼 동영상. bottom-1: 앱 진도 h-1과 겹침 방지. 시크(하단 ~70–110px) 양끝과 겹치면 스크럽이 어려울 수 있음 */
+    className: "absolute bottom-1 left-0 z-10 cursor-default",
+    size: {
+      width: "clamp(9rem, 20%, 14rem)",
+      height: "clamp(60px, 11%, 96px)",
+    },
   },
   bottomRight: {
-    /** 우하단 YouTube 로고 (~128×60). 세로 화면에서는 CC·설정이 우하단으로 내려와 이 구역과 겹칠 수 있음 */
-    className: "absolute bottom-1 right-0 z-10 h-[60px] w-32 cursor-default",
+    /** 우하단 YouTube 로고(큰 알약 ~200px 등). max 높이 96px. 세로 화면 CC·설정과 겹칠 수 있음. 시크 양끝 터치 간섭 가능 */
+    className: "absolute bottom-1 right-0 z-10 cursor-default",
+    size: {
+      width: "clamp(11rem, 26%, 20rem)",
+      height: "clamp(60px, 11%, 96px)",
+    },
   },
 } as const;
 
@@ -1078,10 +1086,12 @@ export default function YoutubePlayer({
         />
         <div
           className={overlayShieldClass(OVERLAY_ZONES.bottomLeft.className, overlayDebug)}
+          style={OVERLAY_ZONES.bottomLeft.size}
           aria-hidden
         />
         <div
           className={overlayShieldClass(OVERLAY_ZONES.bottomRight.className, overlayDebug)}
+          style={OVERLAY_ZONES.bottomRight.size}
           aria-hidden
         />
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
