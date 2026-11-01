@@ -21,7 +21,7 @@ export default function TestPage() {
           <ol className="text-blue-700 list-decimal ml-5 space-y-1">
             <li>터미널에서 <strong>npm install react-player</strong>를 다시 한 번 입력해 보세요.</li>
             <li>브라우저 주소창에 <strong>localhost:3000</strong> 대신 <strong>127.0.0.1:3000</strong>으로 접속해 보세요.</li>
-            <li>유튜브 영상 자체가 외부 재생이 막힌 영상인지 확인해 보세요. (dQw4w9WgXcQ는 보통 잘 됩니다.)</li>
+            <li>일부 영상은 이 페이지에서 재생이 제한될 수 있어요. 다른 영상 ID로도 테스트해 보세요.</li>
           </ol>
         </div>
       </div>

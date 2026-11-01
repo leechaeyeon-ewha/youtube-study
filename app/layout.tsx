@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "영어는 김현정 영어전문학원 | 온라인 학습관",
-  description: "영어는 김현정 영어전문학원 유튜브 학습 관리",
+  description: "영어는 김현정 영어전문학원 온라인 학습 관리",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

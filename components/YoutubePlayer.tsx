@@ -502,7 +502,9 @@ export default function YoutubePlayer({
     clearReadyTimer();
     playerReadyRef.current = false;
     setPlaybackFailure(null);
+    setEmbedError(false);
     setReady(false);
+    resetYoutubeAPIState();
     if (playerRef.current?.destroy) {
       try {
         playerRef.current.destroy();
@@ -589,6 +591,8 @@ export default function YoutubePlayer({
             iv_load_policy: 3,
             playsinline: 1,
             fs: 0,
+            // modestbranding: 로고·브랜딩 축소(플랫폼·정책에 따라 효과가 제한적일 수 있음)
+            modestbranding: 1,
             start: startSec,
           },
           events: {
@@ -980,32 +984,11 @@ export default function YoutubePlayer({
     };
   }, [ready, assignmentId, saveProgress, sendWatchSegment, computePercent, detectSeekBreak, finalizeSegment, openSegment, onFirstProgress]);
 
-  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
   if (!isClient) {
     return <div className="aspect-video rounded-xl bg-gray-900" />;
   }
 
-  if (embedError) {
-    return (
-      <div className="flex aspect-video flex-col items-center justify-center rounded-xl bg-zinc-900 p-6 text-center">
-        <p className="mb-4 text-sm text-zinc-300">
-          이 영상은 이 페이지에서 재생되지 않습니다. (임베드 비허용 또는 제한된 영상일 수 있습니다.)
-        </p>
-        <p className="mb-4 text-xs text-amber-400">
-          YouTube에서 보시면 진도가 저장되지 않습니다. 가능하면 이 페이지에서 시청해 주세요.
-        </p>
-        <a
-          href={youtubeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg bg-red-600 px-4 py-2.5 font-medium text-white hover:bg-red-700"
-        >
-          YouTube에서 보기
-        </a>
-      </div>
-    );
-  }
+  const showFailureOverlay = playbackFailure !== null || embedError;
 
   return (
     <>
@@ -1015,7 +998,7 @@ export default function YoutubePlayer({
           className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
         <div
-          className="absolute left-0 right-0 top-0 z-10 h-12 cursor-default"
+          className="absolute left-0 right-0 top-0 z-10 h-14 cursor-default sm:h-16"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
@@ -1038,34 +1021,55 @@ export default function YoutubePlayer({
             {toastMessage}
           </div>
         )}
-        {playbackFailure && (
+        {showFailureOverlay && (
           <div
             role="alert"
             className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/90 p-5 text-center"
           >
-            {(() => {
-              const copy = getPlaybackFailureMessage(playbackFailure);
-              return (
-                <>
-                  <p className="mb-2 text-sm font-medium text-white">{copy.title}</p>
-                  {copy.extra && (
-                    <p className="mb-4 text-xs text-zinc-300">{copy.extra}</p>
-                  )}
-                  {isStandalonePwa && (
-                    <p className="mb-4 max-w-sm text-xs text-zinc-400">
-                      홈 화면 앱에서 안 되면 크롬 브라우저에서 열어 보세요.
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handlePlaybackRetry}
-                    className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
-                  >
-                    다시 시도
-                  </button>
-                </>
-              );
-            })()}
+            {embedError ? (
+              <>
+                <p className="mb-2 text-sm font-medium text-white">영상을 불러오지 못했어요.</p>
+                <p className="mb-4 text-xs text-zinc-300">
+                  아래 ‘다시 시도’ 또는 ‘영상이 안 나와요’를 눌러 보세요.
+                </p>
+                {isStandalonePwa && (
+                  <p className="mb-4 max-w-sm text-xs text-zinc-400">
+                    홈 화면 앱에서 안 되면 크롬 브라우저에서 열어 보세요.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={handlePlaybackRetry}
+                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
+                >
+                  다시 시도
+                </button>
+              </>
+            ) : (
+              (() => {
+                const copy = getPlaybackFailureMessage(playbackFailure!);
+                return (
+                  <>
+                    <p className="mb-2 text-sm font-medium text-white">{copy.title}</p>
+                    {copy.extra && (
+                      <p className="mb-4 text-xs text-zinc-300">{copy.extra}</p>
+                    )}
+                    {isStandalonePwa && (
+                      <p className="mb-4 max-w-sm text-xs text-zinc-400">
+                        홈 화면 앱에서 안 되면 크롬 브라우저에서 열어 보세요.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handlePlaybackRetry}
+                      className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
+                    >
+                      다시 시도
+                    </button>
+                  </>
+                );
+              })()
+            )}
           </div>
         )}
       </div>
