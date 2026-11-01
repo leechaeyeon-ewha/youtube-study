@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
+import { useViewStateRestore } from "@/lib/useViewStateRestore";
 import { revalidateStudentPaths as revalidateStudentPathsWithRetry } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Modal from "@/components/Modal";
@@ -75,7 +76,8 @@ import {
 } from "@/lib/pageWarmup/adminAssign";
 
 export default function AdminAssignPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, userId } = useAuth();
+  const restoreExpandedStudentIdRef = useRef<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
@@ -219,7 +221,7 @@ export default function AdminAssignPage() {
   async function refreshAfterAssignmentMutation(userId: string, assignmentIds?: string[]) {
     clearAdminAssignCache();
     if (assignmentIds?.length) await revalidateStudentPaths(assignmentIds);
-    await load();
+    await load({ background: students.length > 0 });
     if (expandedStudentId === userId) {
       await fetchAssignmentsForUser(userId, true, true);
     }
@@ -287,7 +289,7 @@ export default function AdminAssignPage() {
     }
   }
 
-  async function load() {
+  async function load(opts?: { background?: boolean }) {
     if (!supabase) {
       setLoading(false);
       return;
@@ -398,6 +400,79 @@ export default function AdminAssignPage() {
     }));
   }
 
+  useViewStateRestore({
+    userId,
+    ui: {
+      expandedStudentId: expandedStudentId ?? null,
+      studentSearchQuery,
+      studentSort,
+      expandedProgressFilter: expandedStudentId
+        ? (progressFilterByStudent[expandedStudentId] ?? "all")
+        : "all",
+      expandedPlaylistKey: expandedStudentId
+        ? (expandedPlaylistByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedVideoSearch: expandedStudentId
+        ? (videoSearchByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedPlaylistListSort: expandedStudentId
+        ? (playlistListSortByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedPlaylistVideoListSort: expandedStudentId
+        ? (playlistVideoListSortByStudent[expandedStudentId] ?? "")
+        : "",
+    },
+    ready: mounted && !loading && students.length > 0,
+    applyUi: (ui) => {
+      restoreExpandedStudentIdRef.current = null;
+      if (typeof ui.studentSearchQuery === "string") setStudentSearchQuery(ui.studentSearchQuery);
+      if (ui.studentSort === "none" || ui.studentSort === "grade" || ui.studentSort === "class") {
+        setStudentSort(ui.studentSort);
+      }
+      const sid =
+        typeof ui.expandedStudentId === "string" && ui.expandedStudentId.trim()
+          ? ui.expandedStudentId.trim()
+          : null;
+      setExpandedStudentId(sid);
+      restoreExpandedStudentIdRef.current = sid;
+      if (sid) {
+        const filter = ui.expandedProgressFilter;
+        if (
+          filter === "all" ||
+          filter === "completed" ||
+          filter === "incomplete" ||
+          filter === "priority"
+        ) {
+          setProgressFilterByStudent((prev) => ({ ...prev, [sid]: filter }));
+        }
+        const playlistKey = ui.expandedPlaylistKey;
+        setExpandedPlaylistByStudent((prev) => ({
+          ...prev,
+          [sid]: typeof playlistKey === "string" && playlistKey.length > 0 ? playlistKey : null,
+        }));
+        if (typeof ui.expandedVideoSearch === "string") {
+          setVideoSearchByStudent((prev) => ({ ...prev, [sid]: ui.expandedVideoSearch as string }));
+        }
+        if (typeof ui.expandedPlaylistListSort === "string") {
+          setPlaylistListSortByStudent((prev) => ({
+            ...prev,
+            [sid]: ui.expandedPlaylistListSort as ListSortOption,
+          }));
+        }
+        if (typeof ui.expandedPlaylistVideoListSort === "string") {
+          setPlaylistVideoListSortByStudent((prev) => ({
+            ...prev,
+            [sid]: ui.expandedPlaylistVideoListSort as ListSortOption,
+          }));
+        }
+      }
+    },
+    afterUiRestore: async () => {
+      const sid = restoreExpandedStudentIdRef.current;
+      if (sid) await fetchAssignmentsForUser(sid, true, true);
+    },
+  });
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -408,7 +483,7 @@ export default function AdminAssignPage() {
 
   if (!mounted) return null;
 
-  if (loading) {
+  if (loading && students.length === 0) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner />

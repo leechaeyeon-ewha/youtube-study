@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
+import { useViewStateRestore } from "@/lib/useViewStateRestore";
 import { extractYoutubeVideoId } from "@/lib/youtube";
 import { revalidateStudentPathsInBackground } from "@/lib/revalidateStudentClient";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -64,7 +65,7 @@ alter table public.profiles
 comment on column public.profiles.enrollment_status is 'enrolled: 재원생, withdrawn: 퇴원생';`;
 
 export default function AdminDashboardPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, userId } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,7 +115,7 @@ export default function AdminDashboardPage() {
   const [deleteTeacherId, setDeleteTeacherId] = useState<string | null>(null);
   const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
 
-  async function load() {
+  async function load(opts?: { background?: boolean }) {
     if (!supabase) {
       setLoading(false);
       return;
@@ -166,6 +167,37 @@ export default function AdminDashboardPage() {
     };
   }, []);
 
+  const hasDashboardData = students.length > 0 || teachers.length > 0;
+
+  useViewStateRestore({
+    userId,
+    ui: {
+      listTab,
+      enrollmentTab,
+      studentSearchQuery,
+      studentSort,
+      studentListSort,
+      expandedTeacherId: expandedTeacherId ?? null,
+    },
+    ready: mounted && !loading && hasDashboardData,
+    applyUi: (ui) => {
+      if (ui.listTab === "students" || ui.listTab === "teachers") setListTab(ui.listTab);
+      if (ui.enrollmentTab === "enrolled" || ui.enrollmentTab === "withdrawn") {
+        setEnrollmentTab(ui.enrollmentTab);
+      }
+      if (typeof ui.studentSearchQuery === "string") setStudentSearchQuery(ui.studentSearchQuery);
+      if (ui.studentSort === "none" || ui.studentSort === "grade" || ui.studentSort === "class") {
+        setStudentSort(ui.studentSort);
+      }
+      if (typeof ui.studentListSort === "string") setStudentListSort(ui.studentListSort as ListSortOption);
+      const tid =
+        typeof ui.expandedTeacherId === "string" && ui.expandedTeacherId.trim()
+          ? ui.expandedTeacherId.trim()
+          : null;
+      setExpandedTeacherId(tid);
+    },
+  });
+
   if (!mounted) return null;
 
   async function handleAddStudent(e: React.FormEvent) {
@@ -195,7 +227,7 @@ export default function AdminDashboardPage() {
       setAddFullName("");
       setAddPassword("");
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       setAddMessage({
         type: "error",
@@ -236,7 +268,7 @@ export default function AdminDashboardPage() {
       setAddTeacherPassword("");
       setAddTeacherName("");
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       setAddTeacherMessage({
         type: "error",
@@ -263,7 +295,7 @@ export default function AdminDashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "강사 삭제 실패");
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "강사 삭제에 실패했습니다.");
     } finally {
@@ -291,7 +323,7 @@ export default function AdminDashboardPage() {
       setAssignTeacherId(null);
       setAssignTeacherSelectedIds(new Set());
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "저장에 실패했습니다.");
     } finally {
@@ -378,7 +410,7 @@ export default function AdminDashboardPage() {
       if (accessToken && inserted?.id) {
         revalidateStudentPathsInBackground(accessToken, [inserted.id]);
       }
-      load();
+      load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       setAssignMessage({
         type: "error",
@@ -508,7 +540,7 @@ export default function AdminDashboardPage() {
       if (accessToken && inserted?.id) {
         revalidateStudentPathsInBackground(accessToken, [inserted.id]);
       }
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       setAssignMessage({
         type: "error",
@@ -574,7 +606,7 @@ export default function AdminDashboardPage() {
         revalidateStudentPathsInBackground(accessToken, newIds);
       }
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       setAssignMessage({
         type: "error",
@@ -611,7 +643,7 @@ export default function AdminDashboardPage() {
         throw new Error(msg);
       }
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
       // 재원생 탭 유지 → 남은 학생들이 그대로 보이도록 (퇴원생은 퇴원생 탭에서 확인)
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "퇴원 처리에 실패했습니다.");
@@ -644,7 +676,7 @@ export default function AdminDashboardPage() {
         throw new Error(msg);
       }
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "재원 복귀에 실패했습니다.");
     } finally {
@@ -671,7 +703,7 @@ export default function AdminDashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "삭제 실패");
       clearAdminDashboardCache();
-      await load();
+      await load({ background: students.length > 0 || teachers.length > 0 });
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     } finally {
@@ -692,7 +724,7 @@ export default function AdminDashboardPage() {
         alert(error.message || "리포트 설정 변경에 실패했습니다.");
         return;
       }
-      load();
+      load({ background: students.length > 0 || teachers.length > 0 });
     } finally {
       setReportToggleUserId(null);
     }
@@ -798,7 +830,7 @@ export default function AdminDashboardPage() {
     (s) => (s as { created_at?: string | null }).created_at
   );
 
-  if (loading) {
+  if (loading && students.length === 0 && teachers.length === 0) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner />
@@ -952,7 +984,7 @@ export default function AdminDashboardPage() {
                     }
                     setShowMigrationModal(false);
                     clearAdminDashboardCache();
-                    await load();
+                    await load({ background: students.length > 0 || teachers.length > 0 });
                     alert("enrollment_status 컬럼이 추가되었습니다. 퇴원/재원 기능을 사용할 수 있습니다.");
                   } catch (e) {
                     setMigrationError(e instanceof Error ? e.message : "실행 중 오류가 발생했습니다.");

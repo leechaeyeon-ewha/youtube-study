@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
+import { useViewStateRestore } from "@/lib/useViewStateRestore";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Modal from "@/components/Modal";
 import AssignVideoListToolbar from "@/components/AssignVideoListToolbar";
@@ -64,7 +65,7 @@ import {
 } from "@/lib/pageWarmup/teacherAssign";
 
 export default function TeacherAssignPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, userId } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [students, setStudents] = useState<StudentSummary[]>([]);
@@ -181,7 +182,7 @@ export default function TeacherAssignPage() {
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
-  async function load() {
+  async function load(opts?: { background?: boolean }) {
     if (!supabase) {
       setLoading(false);
       return;
@@ -215,6 +216,73 @@ export default function TeacherAssignPage() {
     setLoading(false);
   }
 
+  useViewStateRestore({
+    userId,
+    ui: {
+      expandedStudentId: expandedStudentId ?? null,
+      studentSearchQuery,
+      studentSort,
+      expandedProgressFilter: expandedStudentId
+        ? (progressFilterByStudent[expandedStudentId] ?? "all")
+        : "all",
+      expandedPlaylistKey: expandedStudentId
+        ? (expandedPlaylistByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedVideoSearch: expandedStudentId
+        ? (videoSearchByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedPlaylistListSort: expandedStudentId
+        ? (playlistListSortByStudent[expandedStudentId] ?? "")
+        : "",
+      expandedPlaylistVideoListSort: expandedStudentId
+        ? (playlistVideoListSortByStudent[expandedStudentId] ?? "")
+        : "",
+    },
+    ready: mounted && !loading && students.length > 0,
+    applyUi: (ui) => {
+      if (typeof ui.studentSearchQuery === "string") setStudentSearchQuery(ui.studentSearchQuery);
+      if (ui.studentSort === "none" || ui.studentSort === "grade" || ui.studentSort === "class") {
+        setStudentSort(ui.studentSort);
+      }
+      const sid =
+        typeof ui.expandedStudentId === "string" && ui.expandedStudentId.trim()
+          ? ui.expandedStudentId.trim()
+          : null;
+      setExpandedStudentId(sid);
+      if (sid) {
+        const filter = ui.expandedProgressFilter;
+        if (
+          filter === "all" ||
+          filter === "completed" ||
+          filter === "incomplete" ||
+          filter === "priority"
+        ) {
+          setProgressFilterByStudent((prev) => ({ ...prev, [sid]: filter }));
+        }
+        const playlistKey = ui.expandedPlaylistKey;
+        setExpandedPlaylistByStudent((prev) => ({
+          ...prev,
+          [sid]: typeof playlistKey === "string" && playlistKey.length > 0 ? playlistKey : null,
+        }));
+        if (typeof ui.expandedVideoSearch === "string") {
+          setVideoSearchByStudent((prev) => ({ ...prev, [sid]: ui.expandedVideoSearch as string }));
+        }
+        if (typeof ui.expandedPlaylistListSort === "string") {
+          setPlaylistListSortByStudent((prev) => ({
+            ...prev,
+            [sid]: ui.expandedPlaylistListSort as ListSortOption,
+          }));
+        }
+        if (typeof ui.expandedPlaylistVideoListSort === "string") {
+          setPlaylistVideoListSortByStudent((prev) => ({
+            ...prev,
+            [sid]: ui.expandedPlaylistVideoListSort as ListSortOption,
+          }));
+        }
+      }
+    },
+  });
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -236,7 +304,7 @@ export default function TeacherAssignPage() {
       });
       if (res.ok) {
         clearTeacherAssignCache();
-        await load();
+        await load({ background: assignments.length > 0 });
       }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
     } finally {
@@ -255,7 +323,7 @@ export default function TeacherAssignPage() {
       });
       if (res.ok) {
         clearTeacherAssignCache();
-        await load();
+        await load({ background: assignments.length > 0 });
       }
       else alert((await res.json().catch(() => ({}))).error || "변경 실패");
     } finally {
@@ -272,7 +340,7 @@ export default function TeacherAssignPage() {
     });
     if (res.ok) {
       clearTeacherAssignCache();
-      await load();
+      await load({ background: assignments.length > 0 });
     }
     else alert((await res.json().catch(() => ({}))).error || "해제 실패");
   }
@@ -299,7 +367,7 @@ export default function TeacherAssignPage() {
     }
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     clearTeacherAssignCache();
-    await load();
+    await load({ background: assignments.length > 0 });
   }
 
   /** 이 학생의 배정 전체 해제 (재생목록 목록 화면용) */
@@ -318,11 +386,11 @@ export default function TeacherAssignPage() {
     setSelectedByStudent((prev) => ({ ...prev, [userId]: [] }));
     setExpandedPlaylistByStudent((prev) => ({ ...prev, [userId]: null }));
     clearTeacherAssignCache();
-    await load();
+    await load({ background: assignments.length > 0 });
   }
 
   if (!mounted) return null;
-  if (loading) {
+  if (loading && students.length === 0) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner />
