@@ -1094,6 +1094,13 @@ export default function YoutubePlayer({
                 >
                   다시 시도
                 </button>
+                <button
+                  type="button"
+                  onClick={handleUserReportPlayback}
+                  className="mt-3 rounded-md border border-zinc-500 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+                >
+                  영상이 안 나와요
+                </button>
               </>
             ) : (
               (() => {
@@ -1115,6 +1122,13 @@ export default function YoutubePlayer({
                       className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
                     >
                       다시 시도
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleUserReportPlayback}
+                      className="mt-3 rounded-md border border-zinc-500 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+                    >
+                      영상이 안 나와요
                     </button>
                   </>
                 );
