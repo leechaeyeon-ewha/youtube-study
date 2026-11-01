@@ -17,6 +17,23 @@ import { getIsStandalone } from "@/components/KakaoBrowserBanner";
 
 const SKIP_TOLERANCE_SEC = 0.5;
 const MAX_PLAYBACK_RATE = 1.4;
+
+/** MAX_PLAYBACK_RATE 이하인 getAvailablePlaybackRates 값 중 최대. 없으면 1(공식: 비지원 값은 1 방향으로 스냅). */
+function resolveCappedPlaybackRate(p: YTPlayer): number {
+  try {
+    const rates = p.getAvailablePlaybackRates?.();
+    if (Array.isArray(rates) && rates.length > 0) {
+      const within = rates.filter(
+        (r) => typeof r === "number" && Number.isFinite(r) && r <= MAX_PLAYBACK_RATE
+      );
+      if (within.length > 0) return Math.max(...within);
+    }
+  } catch {
+    // ignore
+  }
+  return 1;
+}
+
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 /** 배속 체크 주기: 너무 짧으면 오류·깜빡임 유발 가능 → 1초로 완화 */
 const RATE_CHECK_INTERVAL_MS = 1000;
@@ -100,6 +117,7 @@ interface YTPlayer {
   getPlayerState: () => number;
   getPlaybackRate: () => number;
   setPlaybackRate: (rate: number) => void;
+  getAvailablePlaybackRates?: () => number[];
   destroy: () => void;
   getOptions?: (module: string) => string[];
   setOption?: (module: string, option: string, value: unknown) => void;
@@ -688,7 +706,7 @@ export default function YoutubePlayer({
 
                 const r = p.getPlaybackRate();
                 if (typeof r === "number" && Number.isFinite(r) && r > MAX_PLAYBACK_RATE) {
-                  p.setPlaybackRate(MAX_PLAYBACK_RATE);
+                  p.setPlaybackRate(resolveCappedPlaybackRate(p));
                 }
               } catch {
                 // ignore
@@ -753,8 +771,9 @@ export default function YoutubePlayer({
         if (!p) return;
         const rate = p.getPlaybackRate();
         if (typeof rate === "number" && Number.isFinite(rate) && rate > MAX_PLAYBACK_RATE) {
-          lastKnownRateRef.current = MAX_PLAYBACK_RATE;
-          p.setPlaybackRate(MAX_PLAYBACK_RATE);
+          const capped = resolveCappedPlaybackRate(p);
+          lastKnownRateRef.current = capped;
+          p.setPlaybackRate(capped);
           showRateToast();
         } else {
           lastKnownRateRef.current = rate;
@@ -1028,7 +1047,7 @@ export default function YoutubePlayer({
           className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
         <div
-          className="absolute left-0 right-0 top-0 z-10 h-14 cursor-default sm:h-16"
+          className="absolute left-0 right-44 top-0 z-10 h-14 cursor-default sm:h-16"
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
