@@ -12,6 +12,8 @@ import {
 } from "@/lib/watchIntervals";
 import { fetchProgressWithRetry, warnProgressFailure } from "@/lib/progressRetry";
 import { clearWatchSessionPosition, saveWatchSessionPosition } from "@/lib/watchSessionRestore";
+import { postEmbedFailureLog, type EmbedEventKind } from "@/lib/embedFailureLog";
+import { getIsStandalone } from "@/components/KakaoBrowserBanner";
 
 const SKIP_TOLERANCE_SEC = 0.5;
 const MAX_PLAYBACK_RATE = 1.4;
@@ -21,6 +23,41 @@ const RATE_CHECK_INTERVAL_MS = 1000;
 const RATE_TOAST_MESSAGE = "배속은 1.4배속까지만 사용 가능합니다.";
 const TOAST_DURATION_MS = 2500;
 const TOAST_COOLDOWN_MS = 8000;
+const READY_TIMEOUT_MS = 12_000;
+
+type PlaybackFailure = {
+  kind: EmbedEventKind;
+  errorCode?: number;
+  offline?: boolean;
+};
+
+function getYtEmbedHost(): string | undefined {
+  return process.env.NEXT_PUBLIC_YT_EMBED_HOST === "nocookie"
+    ? "https://www.youtube-nocookie.com"
+    : undefined;
+}
+
+function getPlaybackFailureMessage(failure: PlaybackFailure): { title: string; extra?: string } {
+  if (failure.kind === "ready_timeout" && failure.offline) {
+    return { title: "인터넷 연결을 확인해 주세요." };
+  }
+  if (failure.kind === "ready_timeout") {
+    return {
+      title: "영상 준비가 오래 걸리고 있어요.",
+      extra: "잠시 후 아래 ‘다시 시도’를 눌러 보세요.",
+    };
+  }
+  if (failure.kind === "user_report") {
+    return {
+      title: "영상이 보이지 않는다고 알려 주셨어요.",
+      extra: "아래 ‘다시 시도’를 눌러 보세요.",
+    };
+  }
+  return {
+    title: "영상을 불러오지 못했어요.",
+    extra: "아래 ‘다시 시도’를 눌러 보세요.",
+  };
+}
 
 function progressDebug(...args: unknown[]) {
   if (process.env.NODE_ENV === "development") {
@@ -37,8 +74,13 @@ declare global {
           height: string;
           width: string;
           videoId: string;
+          host?: string;
           playerVars: Record<string, string | number>;
-          events: { onReady?: (e: { target: YTPlayer }) => void; onStateChange?: (e: { data: number }) => void };
+          events: {
+            onReady?: (e: { target: YTPlayer }) => void;
+            onStateChange?: (e: { data: number }) => void;
+            onError?: (e: { data: number }) => void;
+          };
         }
       ) => YTPlayer;
     };
@@ -177,6 +219,11 @@ export default function YoutubePlayer({
   const [isClient, setIsClient] = useState(false);
   const [ready, setReady] = useState(false);
   const [embedError, setEmbedError] = useState(false);
+  const [playbackFailure, setPlaybackFailure] = useState<PlaybackFailure | null>(null);
+  const [playerEpoch, setPlayerEpoch] = useState(0);
+  const [isStandalonePwa, setIsStandalonePwa] = useState(false);
+  const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playerReadyRef = useRef(false);
   const maxWatchedRef = useRef(initialMaxWatched);
   const lastCurrentRef = useRef(initialPosition);
   const lastPlayingPositionRef = useRef(initialPosition);
@@ -429,7 +476,48 @@ export default function YoutubePlayer({
 
   useEffect(() => {
     setIsClient(true);
+    setIsStandalonePwa(getIsStandalone());
   }, []);
+
+  const clearReadyTimer = useCallback(() => {
+    if (readyTimerRef.current) {
+      clearTimeout(readyTimerRef.current);
+      readyTimerRef.current = null;
+    }
+  }, []);
+
+  const reportEmbedFailure = useCallback(
+    (eventKind: EmbedEventKind, errorCode?: number) => {
+      postEmbedFailureLog({
+        assignmentId: assignmentId as string,
+        videoId,
+        eventKind,
+        errorCode,
+      });
+    },
+    [assignmentId, videoId]
+  );
+
+  const handlePlaybackRetry = useCallback(() => {
+    clearReadyTimer();
+    playerReadyRef.current = false;
+    setPlaybackFailure(null);
+    setReady(false);
+    if (playerRef.current?.destroy) {
+      try {
+        playerRef.current.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    playerRef.current = null;
+    setPlayerEpoch((n) => n + 1);
+  }, [clearReadyTimer]);
+
+  const handleUserReportPlayback = useCallback(() => {
+    reportEmbedFailure("user_report");
+    setPlaybackFailure({ kind: "user_report" });
+  }, [reportEmbedFailure]);
 
   const sendWatchSegment = useCallback(
     async (startSec: number, endSec: number) => {
@@ -476,6 +564,8 @@ export default function YoutubePlayer({
 
     let mounted = true;
     let player: YTPlayer | null = null;
+    playerReadyRef.current = false;
+    clearReadyTimer();
 
     loadYoutubeAPI()
       .then((YT) => {
@@ -485,10 +575,12 @@ export default function YoutubePlayer({
         const pageHref = window.location.href;
         const resumeSec = resolveResumeSeekSec();
         const startSec = Math.floor(resumeSec);
+        const embedHost = getYtEmbedHost();
         player = new YT.Player(containerRef.current, {
           height: "100%",
           width: "100%",
           videoId,
+          ...(embedHost ? { host: embedHost } : {}),
           playerVars: {
             origin: pageOrigin,
             widget_referrer: pageHref,
@@ -502,6 +594,9 @@ export default function YoutubePlayer({
           events: {
             onReady: (event: { target: YTPlayer }) => {
               if (!mounted) return;
+              clearReadyTimer();
+              playerReadyRef.current = true;
+              setPlaybackFailure(null);
               playerRef.current = event.target;
               const p = event.target;
               const seekSec = resolveResumeSeekSec();
@@ -520,6 +615,17 @@ export default function YoutubePlayer({
                 // ignore
               }
               setReady(true);
+            },
+            onError: (e: { data: number }) => {
+              if (!mounted) return;
+              clearReadyTimer();
+              playerReadyRef.current = false;
+              const code = Number(e.data);
+              setPlaybackFailure({
+                kind: "error",
+                errorCode: Number.isFinite(code) ? code : undefined,
+              });
+              reportEmbedFailure("error", Number.isFinite(code) ? code : undefined);
             },
             onStateChange: (e: { data: number }) => {
               if (!mounted) return;
@@ -556,6 +662,13 @@ export default function YoutubePlayer({
             },
           },
         }) as unknown as YTPlayer;
+
+        readyTimerRef.current = setTimeout(() => {
+          if (!mounted || playerReadyRef.current) return;
+          const offline = typeof navigator !== "undefined" && !navigator.onLine;
+          setPlaybackFailure({ kind: "ready_timeout", offline });
+          reportEmbedFailure("ready_timeout");
+        }, READY_TIMEOUT_MS);
       })
       .catch((_err: unknown) => {
         if (mounted) setEmbedError(true);
@@ -563,11 +676,20 @@ export default function YoutubePlayer({
 
     return () => {
       mounted = false;
+      clearReadyTimer();
       if (player?.destroy) player.destroy();
       playerRef.current = null;
       setReady(false);
     };
-  }, [isClient, videoId, resolveResumeSeekSec, assignmentId]);
+  }, [
+    isClient,
+    videoId,
+    resolveResumeSeekSec,
+    assignmentId,
+    playerEpoch,
+    clearReadyTimer,
+    reportEmbedFailure,
+  ]);
 
   const lastToastTimeRef = useRef(0);
   const showRateToast = useCallback(() => {
@@ -916,11 +1038,47 @@ export default function YoutubePlayer({
             {toastMessage}
           </div>
         )}
+        {playbackFailure && (
+          <div
+            role="alert"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/90 p-5 text-center"
+          >
+            {(() => {
+              const copy = getPlaybackFailureMessage(playbackFailure);
+              return (
+                <>
+                  <p className="mb-2 text-sm font-medium text-white">{copy.title}</p>
+                  {copy.extra && (
+                    <p className="mb-4 text-xs text-zinc-300">{copy.extra}</p>
+                  )}
+                  {isStandalonePwa && (
+                    <p className="mb-4 max-w-sm text-xs text-zinc-400">
+                      홈 화면 앱에서 안 되면 크롬 브라우저에서 열어 보세요.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handlePlaybackRetry}
+                    className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
+                  >
+                    다시 시도
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+        )}
       </div>
-      <p className="watch-player-hint mt-2 text-center text-xs text-zinc-500">
-        재생이 안 되면 이 페이지에서 시청해 주세요.
-        <span className="text-amber-600"> (YouTube에서 보시면 진도가 저장되지 않습니다)</span>
-      </p>
+      <div className="watch-player-hint mt-2 flex flex-col items-center gap-2 text-center text-xs text-zinc-500">
+        <p>영상이 안 나오면 아래 버튼을 눌러 주세요</p>
+        <button
+          type="button"
+          onClick={handleUserReportPlayback}
+          className="rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+        >
+          영상이 안 나와요
+        </button>
+      </div>
     </>
   );
 }
