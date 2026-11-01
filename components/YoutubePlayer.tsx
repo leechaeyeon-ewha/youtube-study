@@ -37,7 +37,7 @@ function resolveCappedPlaybackRate(p: YTPlayer): number {
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
 /** 배속 체크 주기: 너무 짧으면 오류·깜빡임 유발 가능 → 1초로 완화 */
 const RATE_CHECK_INTERVAL_MS = 1000;
-const RATE_TOAST_MESSAGE = "배속은 1.4배속까지만 사용 가능합니다.";
+const RATE_TOAST_MESSAGE = "배속은 1.25배속까지만 사용 가능합니다.";
 const TOAST_DURATION_MS = 2500;
 const TOAST_COOLDOWN_MS = 8000;
 const READY_TIMEOUT_MS = 12_000;
