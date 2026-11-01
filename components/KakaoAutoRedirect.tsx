@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
-import { getIsKakaoBrowser } from "./KakaoBrowserBanner";
-
-const KAKAO_REDIRECT_KEY = "kakao_redirect_attempted";
+import { usePathname } from "next/navigation";
+import {
+  getIsInAppBrowser,
+  getIsStandalone,
+  KAKAO_REDIRECT_KEY,
+} from "./KakaoBrowserBanner";
 
 /** Android / iOS 구분 */
 function getMobilePlatform(): "android" | "ios" | null {
@@ -14,13 +17,24 @@ function getMobilePlatform(): "android" | "ios" | null {
   return null;
 }
 
+function isAutoRedirectPath(pathname: string): boolean {
+  return pathname === "/" || pathname === "/login";
+}
+
 /**
- * 카카오톡 인앱 브라우저: 탭당 한 번만 외부 브라우저 열기 시도.
- * 재시도 방지로 깜빡임/충돌 방지. 실패 시 배너만 표시.
+ * 인앱 브라우저: "/"·"/login"에서만 탭당 한 번 Android Chrome Intent 시도.
+ * 그 외 경로(시청 링크 등)는 배너만. iOS는 자동 전환 없음.
  */
 export default function KakaoAutoRedirect() {
+  const pathname = usePathname();
+
   useEffect(() => {
-    if (typeof window === "undefined" || !getIsKakaoBrowser()) return;
+    if (typeof window === "undefined") return;
+    if (getIsStandalone()) return;
+    if (!getIsInAppBrowser()) return;
+
+    const path = pathname ?? window.location.pathname;
+    if (!isAutoRedirectPath(path)) return;
 
     try {
       if (sessionStorage.getItem(KAKAO_REDIRECT_KEY) === "1") return;
@@ -30,24 +44,17 @@ export default function KakaoAutoRedirect() {
     }
 
     const platform = getMobilePlatform();
+    if (platform !== "android") return;
+
     const scheme = window.location.protocol.replace(":", "");
-    const path = window.location.pathname + window.location.search;
-    const fullUrl = window.location.href;
+    const urlPath = window.location.pathname + window.location.search;
+    const intentUrl = `intent://${window.location.host}${urlPath}#Intent;package=com.android.chrome;scheme=${scheme};end;`;
 
-    const doRedirect = () => {
-      if (platform === "android") {
-        const intentUrl = `intent://${window.location.host}${path}#Intent;package=com.android.chrome;scheme=${scheme};end;`;
-        window.location.replace(intentUrl);
-        return;
-      }
-      if (platform === "ios") {
-        window.open(fullUrl, "_blank", "noopener,noreferrer");
-      }
-    };
-
-    const t = setTimeout(doRedirect, 400);
+    const t = setTimeout(() => {
+      window.location.replace(intentUrl);
+    }, 400);
     return () => clearTimeout(t);
-  }, []);
+  }, [pathname]);
 
   return null;
 }

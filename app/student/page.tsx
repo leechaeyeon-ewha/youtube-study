@@ -11,7 +11,7 @@ import {
   fetchStudentAssignmentsList,
   STUDENT_ASSIGNMENTS_CACHE_TTL_MS,
 } from "@/lib/studentAssignmentsCache";
-import KakaoBrowserBanner, { useIsKakaoBrowser } from "@/components/KakaoBrowserBanner";
+import { useIsInAppBrowser } from "@/components/KakaoBrowserBanner";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ListSortDropdown from "@/components/ListSortDropdown";
 import {
@@ -244,7 +244,7 @@ export default function StudentPage() {
   const [error, setError] = useState<string | null>(null);
   const { showBanner, installPrompt, platform, installing, runInstall } = usePwaInstall();
   const [pwaDismissed, setPwaDismissed] = useState(false);
-  const isKakaoBrowser = useIsKakaoBrowser();
+  const isInAppBrowser = useIsInAppBrowser();
   const [playlistListSort, setPlaylistListSort] = useState<ListSortOption>("date-desc");
   const [videoSearchQuery, setVideoSearchQuery] = useState("");
   const debouncedVideoSearchQuery = useDebouncedValue(videoSearchQuery, VIDEO_SEARCH_DEBOUNCE_MS);
@@ -416,10 +416,6 @@ export default function StudentPage() {
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4 dark:bg-zinc-950">
       <div className="mx-auto max-w-4xl">
-        {/* 카카오톡 인앱 브라우저: Chrome/Safari로 열기 유도 */}
-        <div className="mb-6">
-          <KakaoBrowserBanner />
-        </div>
         <header className="mb-8">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -645,7 +641,7 @@ export default function StudentPage() {
         {tab === "student" && (
           <>
         {/* PWA: 앱처럼 사용하기 / 홈 화면에 추가 안내 (학생용) */}
-        {showBanner && !pwaDismissed && !isKakaoBrowser && (
+        {showBanner && !pwaDismissed && !isInAppBrowser && (
           <div className="mb-6 rounded-2xl border border-teal-200 bg-teal-50/80 p-4 dark:border-teal-800 dark:bg-teal-900/20">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
