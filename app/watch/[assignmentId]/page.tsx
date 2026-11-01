@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { ASSIGNMENT_SELECT_WATCH, ASSIGNMENT_SELECT_WATCH_FALLBACK } from "@/lib/assignments";
 import { normalizeIntervals, type WatchedInterval } from "@/lib/watchIntervals";
 import { invalidateStudentAssignmentsCache } from "@/lib/studentAssignmentsCache";
+import { resolveWatchStartPosition } from "@/lib/watchSessionRestore";
 import YoutubePlayer from "@/components/YoutubePlayer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
@@ -25,6 +26,14 @@ interface AssignmentRow {
   prevent_skip?: boolean;
   watched_intervals?: unknown;
   videos: Video | null;
+}
+
+interface PlayContext {
+  assignmentId: string;
+  startPosition: number;
+  watchedIntervals: WatchedInterval[];
+  progressPercent: number;
+  preventSkip: boolean;
 }
 
 /** URL의 assignmentId가 유효한 문자열인지 검사 후 반환. 유효하지 않으면 null */
@@ -53,6 +62,44 @@ function startedAtDebugError(...args: unknown[]) {
   }
 }
 
+async function fetchAssignmentForWatch(
+  id: string,
+  userId: string
+): Promise<{ row: AssignmentRow | null; error: string | null }> {
+  if (!supabase) {
+    return { row: null, error: "Supabase가 설정되지 않았습니다." };
+  }
+
+  const { data: firstData, error: firstError } = await supabase
+    .from("assignments")
+    .select(ASSIGNMENT_SELECT_WATCH)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .single();
+
+  if (
+    firstError &&
+    (firstError.message?.includes("watched_intervals") ||
+      firstError.message?.includes("does not exist"))
+  ) {
+    const { data: fallbackData, error: fallbackError } = await supabase
+      .from("assignments")
+      .select(ASSIGNMENT_SELECT_WATCH_FALLBACK)
+      .eq("id", id)
+      .eq("user_id", userId)
+      .single();
+    if (fallbackError || !fallbackData) {
+      return { row: null, error: fallbackError?.message ?? "과제를 찾을 수 없습니다." };
+    }
+    return { row: fallbackData as AssignmentRow, error: null };
+  }
+
+  if (firstError || !firstData) {
+    return { row: null, error: firstError?.message ?? "과제를 찾을 수 없습니다." };
+  }
+  return { row: firstData as AssignmentRow, error: null };
+}
+
 export default function WatchPage() {
   const { accessToken, userId } = useAuth();
   const params = useParams();
@@ -60,16 +107,20 @@ export default function WatchPage() {
 
   const [mounted, setMounted] = useState(false);
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null);
+  const [playContext, setPlayContext] = useState<PlayContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /** 학습 시작 시간(started_at) 기록 실패 시 화면에 잠깐 띄울 메시지 */
   const [startedAtToast, setStartedAtToast] = useState<string | null>(null);
 
-  /** 이미 최초 시청 시작 기록을 요청한 assignment id 집합 (중복·부하 방지) */
   const recordedAssignmentIdsRef = useRef<Set<string>>(new Set());
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoadDoneRef = useRef(false);
+  const accessTokenRef = useRef<string | null>(null);
 
-  /** 진도 1% 이상이 되었을 때 한 번만 호출: assignments.started_at 조건부 업데이트 */
+  useEffect(() => {
+    accessTokenRef.current = accessToken;
+  }, [accessToken]);
+
   const handleRecordStartedAt = useCallback(async () => {
     const id = assignmentId as string | null;
 
@@ -105,16 +156,20 @@ export default function WatchPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ assignmentId: id as string }),
       });
 
-      const data = await res.json().catch(() => ({})) as { error?: string; ok?: boolean; alreadyRecorded?: boolean };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        ok?: boolean;
+        alreadyRecorded?: boolean;
+      };
 
       if (!res.ok) {
         startedAtDebugError("[started_at] API 응답 실패:", res.status, data);
-        const errMsg = (data as { error?: string }).error ?? "시작 시간 기록에 실패했습니다.";
+        const errMsg = data.error ?? "시작 시간 기록에 실패했습니다.";
         setStartedAtToast(errMsg);
         recordedAssignmentIdsRef.current.delete(id);
         if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -141,6 +196,14 @@ export default function WatchPage() {
   }, []);
 
   useEffect(() => {
+    initialLoadDoneRef.current = false;
+    setPlayContext(null);
+    setAssignment(null);
+    setLoading(true);
+    setError(null);
+  }, [assignmentId]);
+
+  useEffect(() => {
     if (!assignmentId) {
       setError("잘못된 경로입니다.");
       setLoading(false);
@@ -151,75 +214,114 @@ export default function WatchPage() {
       setLoading(false);
       return;
     }
+    if (!userId) return;
 
     const id = assignmentId as string;
     let cancelled = false;
 
-    if (!userId) return;
-
     async function load() {
-      let data: unknown = null;
-      let fetchError: { message?: string } | null = null;
-      const { data: firstData, error: firstError } = await supabase!
-        .from("assignments")
-        .select(ASSIGNMENT_SELECT_WATCH)
-        .eq("id", id)
-        .eq("user_id", userId!)
-        .single();
-
+      const { row, error: fetchError } = await fetchAssignmentForWatch(id, userId!);
       if (cancelled) return;
-      if (firstError && (firstError.message?.includes("watched_intervals") || firstError.message?.includes("does not exist"))) {
-        const { data: fallbackData, error: fallbackError } = await supabase!
-          .from("assignments")
-          .select(ASSIGNMENT_SELECT_WATCH_FALLBACK)
-          .eq("id", id)
-          .eq("user_id", userId!)
-          .single();
-        if (cancelled) return;
-        data = fallbackData;
-        fetchError = fallbackError;
-      } else {
-        data = firstData;
-        fetchError = firstError;
-      }
 
-      if (fetchError || !data) {
-        setError(fetchError?.message ?? "과제를 찾을 수 없습니다.");
+      if (fetchError || !row) {
+        setError(fetchError ?? "과제를 찾을 수 없습니다.");
         setLoading(false);
+        initialLoadDoneRef.current = false;
         return;
       }
 
-      setAssignment(data as AssignmentRow);
-      setLoading(false);
+      setAssignment(row);
 
-      const row = data as AssignmentRow;
+      const startPosition = resolveWatchStartPosition(
+        id,
+        typeof row.last_position === "number" ? row.last_position : 0
+      );
+      setPlayContext({
+        assignmentId: id,
+        startPosition,
+        watchedIntervals: normalizeIntervals(row.watched_intervals),
+        progressPercent: row.progress_percent ?? 0,
+        preventSkip: row.prevent_skip !== false,
+      });
+      setLoading(false);
+      initialLoadDoneRef.current = true;
+
       const needNormalize =
         row.progress_percent == null ||
         row.last_position == null ||
         row.is_completed == null;
 
-      // 데이터 정합성: null 필드가 있을 때만 기본값 정규화 API 호출
       if (needNormalize) {
-        if (accessToken) {
+        const token = accessTokenRef.current;
+        if (token) {
           fetch("/api/watch-ensure-progress", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${accessToken}`,
+              Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ assignmentId: id as string }),
+            body: JSON.stringify({ assignmentId: id }),
           }).catch(() => {});
         }
       }
     }
 
     load();
-    return () => { cancelled = true; };
-  }, [assignmentId, userId, accessToken]);
+    return () => {
+      cancelled = true;
+    };
+  }, [assignmentId, userId]);
+
+  useEffect(() => {
+    if (!assignmentId || !userId || !accessToken) return;
+    if (!initialLoadDoneRef.current) return;
+
+    const id = assignmentId as string;
+    let cancelled = false;
+
+    async function refreshInBackground() {
+      const { row, error: fetchError } = await fetchAssignmentForWatch(id, userId!);
+      if (cancelled) return;
+      if (fetchError || !row) return;
+
+      setAssignment(row);
+
+      const needNormalize =
+        row.progress_percent == null ||
+        row.last_position == null ||
+        row.is_completed == null;
+
+      if (needNormalize) {
+        fetch("/api/watch-ensure-progress", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ assignmentId: id }),
+        }).catch(() => {});
+      }
+    }
+
+    refreshInBackground();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, assignmentId, userId]);
 
   if (!mounted) return null;
 
-  if (loading) {
+  if (loading || !playContext || !assignment?.videos) {
+    if (error) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 dark:bg-zinc-950">
+          <p className="text-red-600 dark:text-red-400">{error}</p>
+          <Link href="/student" className="mt-4 text-blue-600 hover:underline dark:text-blue-400">
+            목록으로 돌아가기
+          </Link>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-zinc-950">
         <LoadingSpinner />
@@ -228,20 +330,7 @@ export default function WatchPage() {
     );
   }
 
-  if (error || !assignment?.videos) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 dark:bg-zinc-950">
-        <p className="text-red-600 dark:text-red-400">{error ?? "영상 정보가 없습니다."}</p>
-        <Link href="/student" className="mt-4 text-blue-600 hover:underline dark:text-blue-400">
-          목록으로 돌아가기
-        </Link>
-      </div>
-    );
-  }
-
   const video = assignment.videos;
-  const initialWatchedIntervals: WatchedInterval[] = normalizeIntervals(assignment.watched_intervals);
-  const preventSkip = assignment.prevent_skip !== false;
 
   return (
     <div className="watch-page-landscape flex min-h-[100dvh] flex-col bg-gray-50 py-8 px-4 dark:bg-zinc-950">
@@ -262,18 +351,18 @@ export default function WatchPage() {
           <div className="watch-video-wrap w-full">
             <YoutubePlayer
               videoId={video.video_id}
-              assignmentId={assignment.id as string}
-              initialPosition={typeof assignment.last_position === "number" ? assignment.last_position : 0}
-              initialWatchedIntervals={initialWatchedIntervals}
-              initialProgressPercent={assignment.progress_percent ?? 0}
-              preventSkip={preventSkip}
+              assignmentId={playContext.assignmentId}
+              initialPosition={playContext.startPosition}
+              initialWatchedIntervals={playContext.watchedIntervals}
+              initialProgressPercent={playContext.progressPercent}
+              preventSkip={playContext.preventSkip}
               onFirstProgress={handleRecordStartedAt}
             />
           </div>
         </div>
         <div className="watch-footer border-t border-gray-100 px-6 py-4 dark:border-zinc-800">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            {preventSkip
+            {playContext.preventSkip
               ? `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 스킵 방지가 켜져 있어 앞으로 건너뛸 수 없습니다.`
               : `저장된 진도: ${(assignment.progress_percent ?? 0).toFixed(1)}% · 시청한 구간만 진도에 반영됩니다.`}
           </p>
@@ -283,7 +372,6 @@ export default function WatchPage() {
         </div>
       </main>
 
-      {/* 가로 모드 시 네비게이션: 시네마틱 뷰에서도 목록으로 돌아가기 (CSS에서 landscape일 때만 표시) */}
       <Link
         href="/student"
         className="watch-back-float fixed left-3 top-3 z-20 rounded-full bg-black/60 px-3 py-2 text-sm font-medium text-white backdrop-blur-sm hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-white/50"
@@ -292,7 +380,6 @@ export default function WatchPage() {
         ← 목록
       </Link>
 
-      {/* 학습 시작 시간 기록 실패 시 화면 토스트 */}
       {startedAtToast && (
         <div
           className="fixed bottom-6 left-4 right-4 z-30 rounded-lg bg-red-600 px-4 py-3 text-center text-sm font-medium text-white shadow-lg sm:left-1/2 sm:right-auto sm:w-auto sm:max-w-md sm:-translate-x-1/2"

@@ -10,6 +10,8 @@ import {
   percentFromIntervals,
   type WatchedInterval,
 } from "@/lib/watchIntervals";
+import { fetchProgressWithRetry, warnProgressFailure } from "@/lib/progressRetry";
+import { clearWatchSessionPosition, saveWatchSessionPosition } from "@/lib/watchSessionRestore";
 
 const SKIP_TOLERANCE_SEC = 0.5;
 const MAX_PLAYBACK_RATE = 1.4;
@@ -200,6 +202,23 @@ export default function YoutubePlayer({
   const segmentOpenRef = useRef(false);
   const isCompletedRef = useRef(savedProgressRef.current >= COMPLETE_THRESHOLD_PERCENT);
   const preventSkipRef = useRef(preventSkip);
+  const initialSeekRef = useRef(initialPosition);
+  const appliedInitialSeekForVideoRef = useRef<string | null>(null);
+  const lastKnownTimeRef = useRef(initialPosition);
+  const finalizeSegmentRef = useRef<(endSec: number) => void>(() => {});
+
+  useEffect(() => {
+    initialSeekRef.current = initialPosition;
+    lastKnownTimeRef.current = initialPosition;
+    appliedInitialSeekForVideoRef.current = null;
+  }, [videoId, initialPosition]);
+
+  const resolveResumeSeekSec = useCallback((): number => {
+    const known = lastKnownTimeRef.current;
+    if (Number.isFinite(known) && known > 0) return known;
+    const initial = initialSeekRef.current;
+    return Number.isFinite(initial) && initial > 0 ? initial : 0;
+  }, []);
 
   useEffect(() => {
     preventSkipRef.current = preventSkip;
@@ -264,6 +283,7 @@ export default function YoutubePlayer({
     }
     segmentOpenRef.current = false;
   }, []);
+  finalizeSegmentRef.current = finalizeSegment;
 
   const openSegment = useCallback((startSec: number) => {
     if (!Number.isFinite(startSec) || startSec < 0) return;
@@ -307,7 +327,7 @@ export default function YoutubePlayer({
         if (!token) return;
 
         progressDebug("[progress-debug] POST /api/progress", payload);
-        let res = await fetch("/api/progress", {
+        let res = await fetchProgressWithRetry("/api/progress", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -319,7 +339,7 @@ export default function YoutubePlayer({
         if (res.status === 401) {
           token = await getAccessToken(true);
           if (!token) return;
-          res = await fetch("/api/progress", {
+          res = await fetchProgressWithRetry("/api/progress", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -331,9 +351,12 @@ export default function YoutubePlayer({
 
         if (res.ok) {
           lastProgressPayloadKeyRef.current = payloadKey;
+        } else {
+          const body = await res.json().catch(() => ({}));
+          warnProgressFailure("[progress] POST failed", { status: res.status, body });
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        warnProgressFailure("[progress] POST network error", err);
       }
     },
     [assignmentId, getAccessToken]
@@ -460,6 +483,8 @@ export default function YoutubePlayer({
 
         const pageOrigin = getPageOrigin();
         const pageHref = window.location.href;
+        const resumeSec = resolveResumeSeekSec();
+        const startSec = Math.floor(resumeSec);
         player = new YT.Player(containerRef.current, {
           height: "100%",
           width: "100%",
@@ -472,14 +497,23 @@ export default function YoutubePlayer({
             iv_load_policy: 3,
             playsinline: 1,
             fs: 0,
-            start: Math.floor(initialPosition),
+            start: startSec,
           },
           events: {
             onReady: (event: { target: YTPlayer }) => {
               if (!mounted) return;
               playerRef.current = event.target;
               const p = event.target;
-              if (initialPosition > 0) p.seekTo(initialPosition, true);
+              const seekSec = resolveResumeSeekSec();
+              if (
+                appliedInitialSeekForVideoRef.current !== videoId &&
+                Number.isFinite(seekSec) &&
+                seekSec > 0
+              ) {
+                p.seekTo(seekSec, true);
+                appliedInitialSeekForVideoRef.current = videoId;
+                lastKnownTimeRef.current = seekSec;
+              }
               try {
                 p.setPlaybackRate(1);
               } catch {
@@ -494,10 +528,11 @@ export default function YoutubePlayer({
                 const p = playerRef.current;
                 if (e.data !== 1) {
                   const endSec = lastPlayingPositionRef.current;
-                  if (Number.isFinite(endSec)) finalizeSegment(endSec);
+                  if (Number.isFinite(endSec)) finalizeSegmentRef.current(endSec);
                 }
 
                 if (e.data === 0) {
+                  clearWatchSessionPosition(assignmentId);
                   const d = p.getDuration() || durationRef.current;
                   if (d > 0) durationRef.current = d;
                   const accumulated = d > 0 ? getAccumulatedPercent(d) : 0;
@@ -532,7 +567,7 @@ export default function YoutubePlayer({
       playerRef.current = null;
       setReady(false);
     };
-  }, [isClient, videoId, initialPosition, finalizeSegment]);
+  }, [isClient, videoId, resolveResumeSeekSec, assignmentId]);
 
   const lastToastTimeRef = useRef(0);
   const showRateToast = useCallback(() => {
@@ -587,7 +622,7 @@ export default function YoutubePlayer({
           const p = playerRef.current;
           if (p) {
             const endSec = lastPlayingPositionRef.current;
-            if (Number.isFinite(endSec)) finalizeSegment(endSec);
+            if (Number.isFinite(endSec)) finalizeSegmentRef.current(endSec);
           }
         } catch {
           // ignore
@@ -599,7 +634,7 @@ export default function YoutubePlayer({
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [finalizeSegment]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || !assignmentId) return;
@@ -611,7 +646,10 @@ export default function YoutubePlayer({
         const duration = p.getDuration();
         if (!Number.isFinite(duration) || duration <= 0) return;
         const current = p.getCurrentTime();
-        if (segmentOpenRef.current && Number.isFinite(current)) finalizeSegment(current);
+        if (segmentOpenRef.current && Number.isFinite(current)) {
+          finalizeSegmentRef.current(current);
+        }
+        if (Number.isFinite(current)) lastKnownTimeRef.current = current;
         const lastPos = preventSkipRef.current ? maxWatchedRef.current : current;
         const progressPercent = isCompletedRef.current
           ? Math.max(savedProgressRef.current, 100)
@@ -626,7 +664,6 @@ export default function YoutubePlayer({
         const body: Record<string, unknown> = {
           assignmentId,
           last_position: lastPos,
-          last_watched_at: new Date().toISOString(),
           is_completed: newCompleted,
         };
 
@@ -638,27 +675,62 @@ export default function YoutubePlayer({
           body.progress_percent = Math.min(100, Math.round(progressPercent * 100) / 100);
         }
 
-        fetch("/api/progress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(body),
-          keepalive,
-        });
+        void fetchProgressWithRetry(
+          "/api/progress",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+            keepalive,
+          },
+          { maxAttempts: 1 }
+        ).catch((err) => warnProgressFailure("[progress] keepalive flush failed", err));
       } catch {
         // ignore
       }
     };
     const onBeforeUnload = () => flushProgress(true);
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") flushProgress(false);
+      if (document.visibilityState !== "hidden") return;
+      try {
+        const p = playerRef.current;
+        if (p) {
+          const t = p.getCurrentTime();
+          if (Number.isFinite(t)) {
+            lastKnownTimeRef.current = t;
+            saveWatchSessionPosition(assignmentId, t);
+          }
+        }
+      } catch {
+        // ignore
+      }
+      flushProgress(true);
+    };
+    const onPageHide = () => {
+      try {
+        const p = playerRef.current;
+        if (p) {
+          const current = p.getCurrentTime();
+          if (Number.isFinite(current)) {
+            finalizeSegmentRef.current(current);
+            lastKnownTimeRef.current = current;
+            saveWatchSessionPosition(assignmentId, current);
+          }
+        }
+      } catch {
+        // ignore
+      }
+      flushProgress(true);
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
     };
-  }, [assignmentId, computePercent, finalizeSegment]);
+  }, [assignmentId, computePercent]);
 
   useEffect(() => {
     if (!ready || !assignmentId) return;
@@ -687,6 +759,7 @@ export default function YoutubePlayer({
         const prevCurrent = lastCurrentRef.current;
         lastCurrentRef.current = current;
         lastPlayingPositionRef.current = current;
+        lastKnownTimeRef.current = current;
 
         if (justBecameVisibleRef.current) {
           maxWatchedRef.current = Math.min(maxWatchedWhenHiddenRef.current, current);

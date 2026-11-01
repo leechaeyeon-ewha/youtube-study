@@ -57,10 +57,20 @@ export function AuthProvider({
 }: AuthProviderProps) {
   const router = useRouter();
   const logoutOnceRef = useRef(false);
+  const userIdRef = useRef<string | null>(null);
+  const isReadyRef = useRef(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
+
+  useEffect(() => {
+    isReadyRef.current = isReady;
+  }, [isReady]);
 
   const applySession = useCallback((token: string | null, uid: string | null, nextProfile: Profile | null) => {
     setAccessToken(token);
@@ -169,8 +179,14 @@ export function AuthProvider({
       }
 
       if (event === "SIGNED_IN" && session?.access_token && session.user?.id) {
+        const incomingId = session.user.id;
+        if (userIdRef.current && incomingId === userIdRef.current && isReadyRef.current) {
+          setAccessToken(session.access_token);
+          setAuthSync(session.access_token, incomingId);
+          return;
+        }
         setIsReady(false);
-        await completeAuth(session.access_token, session.user.id);
+        await completeAuth(session.access_token, incomingId);
       }
     });
 

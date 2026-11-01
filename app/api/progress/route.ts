@@ -11,6 +11,27 @@ import {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+const TOUCH_THROTTLE_MS = 30_000;
+
+function serverNow(): string {
+  return new Date().toISOString();
+}
+
+function resolveNextLastPosition(
+  lastPosition: number | undefined,
+  storedLastPosition: unknown
+): number {
+  if (lastPosition != null) return Number(lastPosition);
+  return Number(storedLastPosition ?? 0);
+}
+
+function shouldThrottleTouch(lastWatchedAt: string | null | undefined): boolean {
+  if (!lastWatchedAt) return false;
+  const t = Date.parse(lastWatchedAt);
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t < TOUCH_THROTTLE_MS;
+}
+
 /**
  * 시청 진도 저장. assignment가 없으면 404, 있으면 먼저 null 필드 정규화 후 업데이트(upsert 스타일).
  * watched_intervals가 비어 있지 않으면 서버에서 병합·재계산(클라이언트 progress_percent 미신뢰).
@@ -25,10 +46,12 @@ export async function POST(req: Request) {
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
+
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
+  const authUserId = user.id;
 
   let body: {
     assignmentId?: string;
@@ -50,9 +73,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "assignmentId가 필요합니다." }, { status: 400 });
   }
 
+  async function touchWatchMeta(
+    lastPosition: number
+  ): Promise<{ ok: true; rows: { id: string }[] } | { ok: false; error: string }> {
+    const touchPayload: Record<string, unknown> = {
+      last_watched_at: serverNow(),
+      last_position: lastPosition,
+    };
+    const { data, error } = await supabase
+      .from("assignments")
+      .update(touchPayload)
+      .eq("id", assignmentId as string)
+      .eq("user_id", authUserId)
+      .select("id");
+
+    if (error) return { ok: false, error: error.message };
+    const rows = (data ?? []) as { id: string }[];
+    if (rows.length === 0) {
+      return { ok: false, error: "해당 과제를 찾을 수 없습니다." };
+    }
+    return { ok: true, rows };
+  }
+
   const progressPercent = body?.progress_percent;
   const lastPosition = body?.last_position;
-  const lastWatchedAt = body?.last_watched_at;
   const incomingIntervals = normalizeIntervals(body?.watched_intervals);
   const durationSec = body?.duration_sec != null ? Number(body.duration_sec) : NaN;
   const isReviewMode = body?.isReviewMode === true;
@@ -80,9 +124,9 @@ export async function POST(req: Request) {
 
   const { data: row, error: fetchErr } = await supabase
     .from("assignments")
-    .select("id, progress_percent, last_position, is_completed, watched_intervals")
+    .select("id, progress_percent, last_position, is_completed, watched_intervals, last_watched_at")
     .eq("id", assignmentId as string)
-    .eq("user_id", user.id)
+    .eq("user_id", authUserId)
     .single();
 
   if (fetchErr || !row) {
@@ -100,7 +144,7 @@ export async function POST(req: Request) {
         is_completed: row.is_completed ?? false,
       })
       .eq("id", assignmentId as string)
-      .eq("user_id", user.id);
+      .eq("user_id", authUserId);
   }
 
   const wasCompleted = row.is_completed === true;
@@ -118,8 +162,7 @@ export async function POST(req: Request) {
       ? Math.max(storedPercent, calculatedPercent)
       : calculatedPercent;
 
-    const nextLastPosition =
-      lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
+    const nextLastPosition = resolveNextLastPosition(lastPosition, row.last_position);
 
     if (
       JSON.stringify(merged) === JSON.stringify(stored) &&
@@ -128,6 +171,13 @@ export async function POST(req: Request) {
       Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1 &&
       !isReviewMode
     ) {
+      if (!shouldThrottleTouch(row.last_watched_at as string | null)) {
+        const touch = await touchWatchMeta(nextLastPosition);
+        if (!touch.ok) {
+          return NextResponse.json({ error: touch.error }, { status: 404 });
+        }
+        return NextResponse.json({ ok: true, skipped: true, last_watched_at_updated: true });
+      }
       return NextResponse.json({ ok: true, skipped: true });
     }
 
@@ -136,7 +186,7 @@ export async function POST(req: Request) {
       progress_percent: Math.min(100, progress_percent),
       is_completed: newCompleted,
       last_position: nextLastPosition,
-      last_watched_at: lastWatchedAt ?? new Date().toISOString(),
+      last_watched_at: serverNow(),
     };
   } else {
     const nextProgress = Number(progressPercent);
@@ -146,8 +196,7 @@ export async function POST(req: Request) {
       : nextProgress;
     const nextCompleted =
       wasCompleted || finalProgress >= COMPLETE_THRESHOLD_PERCENT;
-    const nextLastPosition =
-      lastPosition != null ? Number(lastPosition) : (row.last_position ?? 0);
+    const nextLastPosition = resolveNextLastPosition(lastPosition, row.last_position);
 
     if (
       Math.abs(finalProgress - storedPercent) < 0.01 &&
@@ -155,6 +204,13 @@ export async function POST(req: Request) {
       Math.abs(nextLastPosition - Number(row.last_position ?? 0)) < 1 &&
       !isReviewMode
     ) {
+      if (!shouldThrottleTouch(row.last_watched_at as string | null)) {
+        const touch = await touchWatchMeta(nextLastPosition);
+        if (!touch.ok) {
+          return NextResponse.json({ error: touch.error }, { status: 404 });
+        }
+        return NextResponse.json({ ok: true, skipped: true, last_watched_at_updated: true });
+      }
       return NextResponse.json({ ok: true, skipped: true });
     }
 
@@ -162,18 +218,27 @@ export async function POST(req: Request) {
       progress_percent: Math.min(100, finalProgress),
       is_completed: nextCompleted,
       last_position: nextLastPosition,
-      last_watched_at: lastWatchedAt ?? new Date().toISOString(),
+      last_watched_at: serverNow(),
     };
   }
 
   const nextProgressPercent = Number(updatePayload.progress_percent);
+  const fallbackLastPosition = Number(updatePayload.last_position);
 
-  let { error: updateErr } = await supabase
-    .from("assignments")
-    .update(updatePayload)
-    .eq("id", assignmentId as string)
-    .eq("user_id", user.id)
-    .lte("progress_percent", nextProgressPercent);
+  async function runProgressUpdate(payload: Record<string, unknown>, ltePercent: number) {
+    return supabase
+      .from("assignments")
+      .update(payload)
+      .eq("id", assignmentId as string)
+      .eq("user_id", authUserId)
+      .lte("progress_percent", ltePercent)
+      .select("id");
+  }
+
+  let { data: updatedRows, error: updateErr } = await runProgressUpdate(
+    updatePayload,
+    nextProgressPercent
+  );
 
   if (
     updateErr &&
@@ -186,17 +251,35 @@ export async function POST(req: Request) {
       legacyPayload.progress_percent = Number(progressPercent);
     }
     const retryProgressPercent = Number(legacyPayload.progress_percent);
-    const { error: retryErr } = await supabase
-      .from("assignments")
-      .update(legacyPayload)
-      .eq("id", assignmentId as string)
-      .eq("user_id", user.id)
-      .lte("progress_percent", retryProgressPercent);
-    updateErr = retryErr;
+    const retry = await runProgressUpdate(legacyPayload, retryProgressPercent);
+    updatedRows = retry.data;
+    updateErr = retry.error;
   }
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
   }
+
+  const rowCount = (updatedRows ?? []).length;
+  if (rowCount === 0) {
+    const touch = await touchWatchMeta(fallbackLastPosition);
+    if (!touch.ok) {
+      return NextResponse.json({ error: touch.error }, { status: 404 });
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[progress] progress_unchanged: lte guard blocked full update", {
+        assignmentId,
+        stored: row.progress_percent,
+        attempted: nextProgressPercent,
+      });
+    }
+    return NextResponse.json({
+      ok: true,
+      progress_unchanged: true,
+      reason: "lte_guard",
+      last_watched_at_updated: true,
+    });
+  }
+
   return NextResponse.json({ ok: true });
 }
