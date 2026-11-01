@@ -44,6 +44,27 @@ const READY_TIMEOUT_MS = 12_000;
 /** 플레이어 생성 직후 이 시간까지만 onApiChange로 자막 OFF 재시도 */
 const CAPTIONS_DISABLE_WINDOW_MS = 5000;
 
+/** iframe 위 터치 차단 구역(픽셀·Tailwind는 여기만 조정) */
+const OVERLAY_ZONES = {
+  topLeft: {
+    /** 좌상단 채널·제목. 우측 176px(right-44)는 음량·CC·설정 */
+    className: "absolute left-0 top-0 right-44 z-10 h-14 cursor-default sm:h-16",
+  },
+  bottomLeft: {
+    /** 좌하단 공유·나중에 볼 동영상 (~144×60). bottom-1: 앱 진도 h-1과 겹침 방지 */
+    className: "absolute bottom-1 left-0 z-10 h-[60px] w-36 cursor-default",
+  },
+  bottomRight: {
+    /** 우하단 YouTube 로고 (~128×60). 세로 화면에서는 CC·설정이 우하단으로 내려와 이 구역과 겹칠 수 있음 */
+    className: "absolute bottom-1 right-0 z-10 h-[60px] w-32 cursor-default",
+  },
+} as const;
+
+function overlayShieldClass(base: string, debug: boolean): string {
+  if (!debug) return base;
+  return `${base} border border-red-600 bg-red-500/40`;
+}
+
 type PlaybackFailure = {
   kind: EmbedEventKind;
   errorCode?: number;
@@ -1037,6 +1058,10 @@ export default function YoutubePlayer({
     return <div className="aspect-video rounded-xl bg-gray-900" />;
   }
 
+  const overlayDebug =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("overlayDebug") === "1";
+
   const showFailureOverlay = playbackFailure !== null || embedError;
 
   return (
@@ -1047,16 +1072,18 @@ export default function YoutubePlayer({
           className="absolute inset-0 h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full"
         />
         <div
-          className="absolute left-0 right-44 top-0 z-10 h-14 cursor-default sm:h-16"
+          className={overlayShieldClass(OVERLAY_ZONES.topLeft.className, overlayDebug)}
           title="진도 저장을 위해 이 페이지에서 시청해 주세요."
           aria-hidden
         />
         <div
-          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default pointer-events-none"
+          className={overlayShieldClass(OVERLAY_ZONES.bottomLeft.className, overlayDebug)}
           aria-hidden
-        >
-          {/* CC/⚙ 터치 허용을 위해 의도적으로 비활성화. YouTube 로고 노출 시 폭 축소로 대응 예정 */}
-        </div>
+        />
+        <div
+          className={overlayShieldClass(OVERLAY_ZONES.bottomRight.className, overlayDebug)}
+          aria-hidden
+        />
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
