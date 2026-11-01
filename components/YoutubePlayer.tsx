@@ -24,6 +24,8 @@ const RATE_TOAST_MESSAGE = "배속은 1.4배속까지만 사용 가능합니다.
 const TOAST_DURATION_MS = 2500;
 const TOAST_COOLDOWN_MS = 8000;
 const READY_TIMEOUT_MS = 12_000;
+/** 플레이어 생성 직후 이 시간까지만 onApiChange로 자막 OFF 재시도 */
+const CAPTIONS_DISABLE_WINDOW_MS = 5000;
 
 type PlaybackFailure = {
   kind: EmbedEventKind;
@@ -80,6 +82,7 @@ declare global {
             onReady?: (e: { target: YTPlayer }) => void;
             onStateChange?: (e: { data: number }) => void;
             onError?: (e: { data: number }) => void;
+            onApiChange?: () => void;
           };
         }
       ) => YTPlayer;
@@ -98,6 +101,8 @@ interface YTPlayer {
   getPlaybackRate: () => number;
   setPlaybackRate: (rate: number) => void;
   destroy: () => void;
+  getOptions?: (module: string) => string[];
+  setOption?: (module: string, option: string, value: unknown) => void;
 }
 
 interface Props {
@@ -567,6 +572,8 @@ export default function YoutubePlayer({
     let mounted = true;
     let player: YTPlayer | null = null;
     playerReadyRef.current = false;
+    let captionsDisableDone = false;
+    const playerCreatedAt = Date.now();
     clearReadyTimer();
 
     loadYoutubeAPI()
@@ -593,9 +600,26 @@ export default function YoutubePlayer({
             fs: 0,
             // modestbranding: 로고·브랜딩 축소(플랫폼·정책에 따라 효과가 제한적일 수 있음)
             modestbranding: 1,
+            // cc_load_policy=0: 공식 문서는 값 1(켜기)만 명시, 0은 관행적 OFF 시도. 완전 보장은 API 보조 필요
+            cc_load_policy: 0,
             start: startSec,
           },
           events: {
+            onApiChange: () => {
+              if (!mounted || captionsDisableDone) return;
+              if (Date.now() - playerCreatedAt > CAPTIONS_DISABLE_WINDOW_MS) return;
+              const p = playerRef.current;
+              if (!p) return;
+              try {
+                const captionOpts = p.getOptions?.("captions");
+                if (!Array.isArray(captionOpts) || captionOpts.length === 0) return;
+                // 비공식: IFrame API 문서에는 captions.track 미기재. unloadModule은 사용하지 않음
+                p.setOption?.("captions", "track", {});
+                captionsDisableDone = true;
+              } catch {
+                // ignore
+              }
+            },
             onReady: (event: { target: YTPlayer }) => {
               if (!mounted) return;
               clearReadyTimer();
@@ -615,6 +639,12 @@ export default function YoutubePlayer({
               }
               try {
                 p.setPlaybackRate(1);
+              } catch {
+                // ignore
+              }
+              try {
+                // 비공식: onReady 1회만 시도. captionsDisableDone은 onApiChange(c)에서만 true
+                p.setOption?.("captions", "track", {});
               } catch {
                 // ignore
               }
@@ -1003,10 +1033,11 @@ export default function YoutubePlayer({
           aria-hidden
         />
         <div
-          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default"
-          title="진도 저장을 위해 이 페이지에서 시청해 주세요."
+          className="absolute bottom-0 right-0 z-10 h-20 w-24 cursor-default pointer-events-none"
           aria-hidden
-        />
+        >
+          {/* CC/⚙ 터치 허용을 위해 의도적으로 비활성화. YouTube 로고 노출 시 폭 축소로 대응 예정 */}
+        </div>
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-zinc-700">
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
